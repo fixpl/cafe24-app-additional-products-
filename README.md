@@ -44,10 +44,10 @@ DB가 없으므로 refresh 경쟁을 전역으로 잠글 수 없습니다. 한 �
 
 Cafe24 개발자센터 앱 설정에는 배포 도메인을 기준으로 다음 URL을 등록합니다.
 
-- App URL: `https://your-app.vercel.app/app`
-- Redirect URI: `https://your-app.vercel.app/auth/callback`
+- App URL: `https://app.example.com/app`
+- Redirect URI(s): `https://example.com`
 
-Redirect URI는 `CAFE24_REDIRECT_URI`와 문자 단위로 같아야 합니다. 권한 관리에서 `mall.read_product`, `mall.write_product`, `mall.read_application`, `mall.write_application`을 모두 선택합니다. 코드는 Cafe24 앱 실행 시 네 scope를 OAuth 요청에 자동으로 포함하고, 발급된 토큰과 IndexedDB envelope에도 네 scope가 정확히 있는지 검증합니다. `CAFE24_SKIP_HMAC_CHECK=true`는 로컬 개발에서만 사용할 수 있으며 production에서는 허용되지 않습니다.
+Cafe24 개발자센터는 subdomain을 사용하는 경우 Redirect URI(s)에 대표 도메인만 등록하도록 안내합니다. 서버의 `CAFE24_REDIRECT_URI`는 실제 callback인 `https://app.example.com/auth/callback`을 사용합니다. 권한 관리에서 `mall.read_product`, `mall.write_product`, `mall.read_application`, `mall.write_application`을 모두 선택합니다. 코드는 Cafe24 앱 실행 시 네 scope를 OAuth 요청에 자동으로 포함하고, 발급된 토큰과 IndexedDB envelope에도 네 scope가 정확히 있는지 검증합니다. `CAFE24_SKIP_HMAC_CHECK=true`는 로컬 개발에서만 사용할 수 있으며 production에서는 허용되지 않습니다.
 
 ## CSV 형식
 

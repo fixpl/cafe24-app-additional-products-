@@ -46,8 +46,10 @@ DB 없이 IndexedDB envelope를 사용하므로 refresh token 동시 갱신 경�
 
 ```text
 App URL: https://your-app.example.com/app
-Redirect URI: https://your-app.example.com/auth/callback
+Redirect URI(s): https://example.com
 ```
+
+Cafe24 개발자센터는 subdomain이 있으면 Redirect URI(s)에 대표 도메인만 등록하도록 안내합니다. 위 값은 Cafe24 개발자센터의 허용 도메인이고, Dokploy의 `CAFE24_REDIRECT_URI`는 실제 callback인 `https://your-app.example.com/auth/callback`을 사용합니다.
 
 권한 관리에서 다음 scope를 모두 선택합니다.
 

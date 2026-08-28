@@ -37,6 +37,16 @@
 
 	type DisplayJob = UploadJobRecord & { note?: string };
 
+	interface AuthApiSuccess {
+		ok: true;
+		auth: AuthStatus;
+		credential: TokenEnvelopeRecord | null;
+	}
+
+	const ACCESS_TOKEN_REFRESH_BUFFER_MS = 5 * 60_000;
+	const MAX_SCHEDULED_REFRESH_DELAY_MS = 30 * 60_000;
+	const REFRESH_RETRY_DELAY_MS = 60_000;
+
 	class ApiFailure extends Error {
 		readonly reauthorize: boolean;
 
@@ -62,6 +72,8 @@
 	let progressLabel = $state('');
 	let activeController = $state<AbortController | null>(null);
 	let cancelRequested = false;
+	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+	let credentialRefreshRunning = false;
 
 	const phase = $derived(
 		data.invalidAccess
@@ -88,7 +100,15 @@
 			loading = false;
 			return;
 		}
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === 'visible') void refreshCredential();
+		};
+		document.addEventListener('visibilitychange', handleVisibilityChange);
 		void bootstrap();
+		return () => {
+			clearScheduledCredentialRefresh();
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+		};
 	});
 
 	async function bootstrap() {
@@ -116,13 +136,7 @@
 				headers: { 'content-type': 'application/json', accept: 'application/json' },
 				body: JSON.stringify({ envelope: stored.envelope })
 			});
-			const payload = (await response.json()) as
-				| {
-						ok: true;
-						auth: AuthStatus & { connected?: boolean };
-						credential: TokenEnvelopeRecord | null;
-				  }
-				| ApiErrorResponse;
+			const payload = (await response.json()) as AuthApiSuccess | ApiErrorResponse;
 			if (!response.ok || !payload.ok) {
 				await clearTokenCredential();
 				banner = {
@@ -134,10 +148,7 @@
 			credential = payload.credential ?? stored;
 			auth = payload.auth;
 			if (payload.credential) await saveTokenCredential(payload.credential);
-			banner = {
-				kind: 'info',
-				message: `${payload.auth.mallId} 몰의 암호화된 연결 정보를 불러왔습니다.`
-			};
+			scheduleCredentialRefresh();
 		} catch (error) {
 			banner = {
 				kind: 'error',
@@ -145,6 +156,71 @@
 			};
 		} finally {
 			loading = false;
+		}
+	}
+
+	function clearScheduledCredentialRefresh() {
+		if (refreshTimer !== null) {
+			clearTimeout(refreshTimer);
+			refreshTimer = null;
+		}
+	}
+
+	function scheduleCredentialRefresh(delayOverride?: number) {
+		clearScheduledCredentialRefresh();
+		if (!credential) return;
+		const expiresAt = Date.parse(credential.accessTokenExpiresAt);
+		const scheduledDelay =
+			delayOverride ??
+			(Number.isFinite(expiresAt)
+				? Math.max(0, expiresAt - Date.now() - ACCESS_TOKEN_REFRESH_BUFFER_MS)
+				: 0);
+		refreshTimer = setTimeout(
+			() => void refreshCredential(),
+			Math.min(scheduledDelay, MAX_SCHEDULED_REFRESH_DELAY_MS)
+		);
+	}
+
+	async function refreshCredential() {
+		if (!credential) return;
+		if (credentialRefreshRunning || running) {
+			scheduleCredentialRefresh(running ? REFRESH_RETRY_DELAY_MS : undefined);
+			return;
+		}
+		credentialRefreshRunning = true;
+		try {
+			await withCredentialLock(async () => {
+				const activeCredential = credential;
+				if (!activeCredential) return;
+				const response = await fetch('/api/auth/refresh', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json', accept: 'application/json' },
+					body: JSON.stringify({ envelope: activeCredential.envelope })
+				});
+				const payload = (await response.json()) as AuthApiSuccess | ApiErrorResponse;
+				if (!response.ok || !payload.ok) {
+					if (!payload.ok && payload.error.reauthorize) {
+						await clearTokenCredential();
+						credential = null;
+						auth = null;
+						clearScheduledCredentialRefresh();
+						banner = { kind: 'error', message: payload.error.message };
+						return;
+					}
+					scheduleCredentialRefresh(REFRESH_RETRY_DELAY_MS);
+					return;
+				}
+				auth = payload.auth;
+				if (payload.credential) {
+					credential = payload.credential;
+					await saveTokenCredential(payload.credential);
+				}
+				scheduleCredentialRefresh();
+			});
+		} catch {
+			scheduleCredentialRefresh(REFRESH_RETRY_DELAY_MS);
+		} finally {
+			credentialRefreshRunning = false;
 		}
 	}
 
@@ -197,33 +273,6 @@
 		anchor.download = 'cafe24-additional-products-template.csv';
 		anchor.click();
 		URL.revokeObjectURL(url);
-	}
-
-	async function disconnect() {
-		cancelUpload();
-		let serverCleared: boolean;
-		try {
-			const response = await fetch('/api/auth/logout', {
-				method: 'POST',
-				headers: { accept: 'application/json' }
-			});
-			serverCleared = response.ok;
-		} catch {
-			serverCleared = false;
-		}
-		await clearTokenCredential();
-		credential = null;
-		auth = null;
-		selectedFile = null;
-		operations = [];
-		issues = [];
-		summary = null;
-		banner = serverCleared
-			? { kind: 'info', message: '이 브라우저의 Cafe24 연결 정보를 삭제했습니다.' }
-			: {
-					kind: 'error',
-					message: '로컬 연결 정보는 삭제했지만 서버 세션 쿠키 정리는 확인하지 못했습니다.'
-				};
 	}
 
 	function cancelUpload() {
@@ -305,6 +354,7 @@
 							await clearTokenCredential();
 							credential = null;
 							auth = null;
+							clearScheduledCredentialRefresh();
 						}
 						cancelRequested = true;
 						banner = { kind: 'error', message: failure.message };
@@ -349,6 +399,7 @@
 			running = false;
 			activeController = null;
 			cancelRequested = false;
+			scheduleCredentialRefresh();
 		}
 	}
 
@@ -369,7 +420,16 @@
 		}
 		if (payload.credential) {
 			credential = payload.credential;
+			auth = {
+				mallId: payload.credential.mallId,
+				shopNo: payload.credential.shopNo,
+				userId: payload.credential.userId,
+				accessTokenExpiresAt: payload.credential.accessTokenExpiresAt,
+				refreshTokenExpiresAt: payload.credential.refreshTokenExpiresAt,
+				scopes: [...payload.credential.scopes]
+			};
 			await saveTokenCredential(payload.credential);
+			scheduleCredentialRefresh();
 		}
 		return payload.result;
 	}
@@ -410,7 +470,6 @@
 			{jobs}
 			{canApply}
 			handlers={{
-				onDisconnect: disconnect,
 				onFile: selectFile,
 				onDownload: downloadTemplate,
 				onApply: applyUpload,

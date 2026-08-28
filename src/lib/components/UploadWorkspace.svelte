@@ -40,7 +40,6 @@
 	}
 
 	export interface UploadWorkspaceHandlers {
-		onDisconnect: () => void;
 		onFile: (file: File) => void;
 		onDownload: () => void;
 		onApply: () => void;
@@ -57,8 +56,6 @@
 	import Icon from '@iconify/svelte';
 	import uploadIcon from '@iconify-icons/material-symbols/cloud-upload-outline-rounded';
 	import downloadIcon from '@iconify-icons/material-symbols/download-rounded';
-	import helpIcon from '@iconify-icons/material-symbols/help-outline-rounded';
-	import logoutIcon from '@iconify-icons/material-symbols/logout-rounded';
 	import pendingIcon from '@iconify-icons/material-symbols/sync-rounded';
 	import successIcon from '@iconify-icons/material-symbols/check-circle-rounded';
 	import warningIcon from '@iconify-icons/material-symbols/warning-outline-rounded';
@@ -155,7 +152,7 @@
 </script>
 
 <svelte:head>
-	<title>Cafe24 추가구성상품 등록</title>
+	<title>Cafe24 추가구성상품 엑셀 업로드</title>
 </svelte:head>
 
 <section class="workspace-shell">
@@ -175,23 +172,14 @@
 		</section>
 	{:else}
 		<header class="workspace-header">
-			<div class="title-row">
-				<h1>엑셀 업로드</h1>
-				<a
-					class="help-link"
-					href="https://developers.cafe24.com/docs/ko/api/admin/#products__additionalproducts"
-					target="_blank"
-					rel="noreferrer"
-					aria-label="Cafe24 추가구성상품 API 문서 보기"
-				>
-					<Icon icon={helpIcon} width="18" height="18" />
-				</a>
-			</div>
+			<h1>추가구성상품 엑셀 업로드</h1>
 
 			{#if auth}
-				<div class="auth-pill">
-					<span>{auth.mallId}</span>
-					<span>만료 {formatDate(auth.accessTokenExpiresAt)}</span>
+				<div
+					class="auth-pill"
+					title="액세스 토큰 원문은 표시하지 않습니다. 괄호 안은 액세스 토큰 만료 시각입니다."
+				>
+					<span>몰 아이디: {auth.mallId} ({formatDate(auth.accessTokenExpiresAt)})</span>
 				</div>
 			{/if}
 		</header>
@@ -249,17 +237,6 @@
 					>
 						{phase === 'running' ? '업로드 처리 중' : 'CSV 업로드'}
 					</button>
-					{#if auth}
-						<button class="secondary-button" type="button" onclick={handlers.onDisconnect}>
-							<Icon icon={logoutIcon} width="18" height="18" />
-							<span>연결 해제</span>
-						</button>
-					{/if}
-				</div>
-
-				<div class="dropzone-notes">
-					<span>지원 형식: UTF-8 `.csv`</span>
-					<span>적용 대상: Products additionalproducts POST / PUT</span>
 				</div>
 			</div>
 
@@ -409,12 +386,6 @@
 		gap: 16px;
 	}
 
-	.title-row {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
-
 	h1,
 	h2,
 	h3,
@@ -429,7 +400,6 @@
 		color: #2f3747;
 	}
 
-	.help-link,
 	.auth-pill,
 	.banner,
 	.workspace-board,
@@ -444,18 +414,6 @@
 	.secondary-button,
 	.template-button {
 		border-radius: 6px;
-	}
-
-	.help-link {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		color: #96a0b5;
-		background: transparent;
-		border: 0;
-		border-radius: 999px;
 	}
 
 	.auth-pill {
@@ -499,8 +457,7 @@
 	.primary-button:focus-visible,
 	.secondary-button:focus-visible,
 	.template-button:focus-visible,
-	.dropzone-surface:focus-visible,
-	.help-link:focus-visible {
+	.dropzone-surface:focus-visible {
 		box-shadow: 0 0 0 3px rgba(113, 151, 247, 0.2);
 		border-color: #7a97e9;
 	}
@@ -681,18 +638,6 @@
 
 	.secondary-button.compact {
 		padding-inline: 18px;
-	}
-
-	.dropzone-notes {
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-		padding: 0;
-		border: 0;
-		background: transparent;
-		font-size: 13px;
-		color: #687388;
-		text-align: center;
 	}
 
 	.status-panel {
