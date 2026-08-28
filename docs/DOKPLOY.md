@@ -63,7 +63,7 @@ mall.write_application
 Dokploy Deployments 로그에서 `pnpm run build:railpack`과 `node build`이 사용되는지 확인합니다. 배포 후 실제 domain으로 health endpoint를 확인합니다.
 
 ```bash
-curl -fsS https://your-app.example.com/api/health
+curl -fsS https://app-cafe24-additional-products.fixpl.net/api/health
 ```
 
 정상 응답:

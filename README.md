@@ -22,7 +22,7 @@ Cafe24 OAuth로 로그인한 뒤 CSV를 검증하고, 기준상품별 추가구�
 
 OAuth callback은 SvelteKit server에서 access token과 refresh token을 받은 뒤 AES-256-GCM으로 암호화합니다. 브라우저 IndexedDB에는 토큰 원문이 아니라 인증 정보와 결합된 ciphertext envelope만 저장합니다. 실제 API 요청 때 브라우저가 envelope를 SvelteKit endpoint로 보내면, server가 Vercel Environment Variable의 키로 복호화하여 Cafe24 API를 호출합니다.
 
-사용자는 `mall_id`나 `shop_no`를 앱 화면에서 직접 입력하지 않습니다. Cafe24 관리자의 설치 앱이 `/app`을 실행하면 launch HMAC을 검증하고 OAuth를 자동 시작합니다. `/app`으로 다시 들어올 때마다 authorization code를 새 access token과 refresh token으로 교환하고, 기존 IndexedDB envelope를 새 값으로 교체합니다. 정상적인 Cafe24 실행 정보 없이 직접 접속하면 업로드 화면이나 수동 연결 폼 대신 정상 실행 안내만 표시합니다.
+사용자는 `mall_id`나 `shop_no`를 앱 화면에서 직접 입력하지 않습니다. Cafe24 관리자의 설치 앱이 등록된 App URL을 실행하면 루트 `/`로 들어온 launch query도 내부 `/app` 검증 경로로 전달하여 HMAC을 검증하고 OAuth를 자동 시작합니다. 앱을 다시 실행할 때마다 authorization code를 새 access token과 refresh token으로 교환하고, 기존 IndexedDB envelope를 새 값으로 교체합니다. 정상적인 Cafe24 실행 정보 없이 직접 접속하면 업로드 화면이나 수동 연결 폼 대신 정상 실행 안내만 표시합니다.
 
 앱을 열어 둔 동안에는 background timer로 토큰을 계속 갱신하지 않습니다. Cafe24 추가구성상품 API를 호출할 때 access token 만료가 5분 이내이거나 첫 호출이 `401`이면 refresh token으로 한 번 자동 갱신하고, 갱신된 token pair를 다시 암호화해 IndexedDB envelope를 업데이트합니다. refresh token까지 만료되거나 갱신이 거절되면 Cafe24 관리자에서 앱을 다시 실행해야 합니다.
 

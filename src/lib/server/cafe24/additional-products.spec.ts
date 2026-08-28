@@ -88,10 +88,13 @@ function assertCafe24Request(
 
 describe('executeAdditionalProductOperation', () => {
 	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-08-27T12:00:00.000Z'));
 		fixtures.refreshCafe24Token.mockReset();
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.unstubAllGlobals();
 	});
 
