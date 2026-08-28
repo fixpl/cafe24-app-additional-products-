@@ -1,0 +1,22 @@
+{
+	"$schema": "https://schema.railpack.com",
+	"provider": "node",
+	"packages": {
+		"node": "22"
+	},
+	"steps": {
+		"build": {
+			"commands": ["pnpm run build:railpack"]
+		}
+	},
+	"deploy": {
+		"startCommand": "node build",
+		"variables": {
+			"NODE_ENV": "production",
+			"HOST": "0.0.0.0",
+			"PORT": "3000",
+			"PROTOCOL_HEADER": "x-forwarded-proto",
+			"HOST_HEADER": "x-forwarded-host"
+		}
+	}
+}

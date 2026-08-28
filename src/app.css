@@ -1,0 +1,64 @@
+:root {
+	--page-bg: #f3f4f7;
+	--surface: #ffffff;
+	--border: #e5e7eb;
+	--text: #1f2937;
+	--shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+	font-family:
+		'Pretendard Variable', 'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+	color: var(--text);
+	background: var(--page-bg);
+}
+
+html,
+body {
+	margin: 0;
+	min-height: 100%;
+	background: var(--page-bg);
+}
+
+body {
+	color: var(--text);
+}
+
+a {
+	color: inherit;
+	text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+	font: inherit;
+}
+
+button {
+	cursor: pointer;
+}
+
+.app-shell {
+	min-height: 100vh;
+	padding: 8px;
+	box-sizing: border-box;
+	background: var(--page-bg);
+}
+
+.page-card {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 0;
+	box-shadow: var(--shadow);
+}
+
+@media (max-width: 720px) {
+	.app-shell {
+		padding: 0;
+	}
+
+	.page-card {
+		border-radius: 0;
+		border-inline: 0;
+	}
+}
