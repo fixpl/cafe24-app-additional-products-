@@ -140,13 +140,13 @@ describe('parseAdditionalProductsCsv', () => {
 		]);
 	});
 
-	it('200개를 초과한 데이터 행을 제외하고 이슈를 반환한다', () => {
-		const rows = Array.from({ length: 201 }, (_, index) => `${index + 1},${index + 1001}`);
+	it('500개를 초과한 데이터 행을 제외하고 이슈를 반환한다', () => {
+		const rows = Array.from({ length: 501 }, (_, index) => `${index + 1},${index + 1001}`);
 		const result = parseAdditionalProductsCsv(`${HEADER}\n${rows.join('\n')}`);
 
-		expect(result.operations).toHaveLength(200);
+		expect(result.operations).toHaveLength(500);
 		expect(result.issues).toEqual([
-			expect.objectContaining({ row: 202, message: expect.stringContaining('최대 200개') })
+			expect.objectContaining({ row: 502, message: expect.stringContaining('최대 500개') })
 		]);
 	});
 });

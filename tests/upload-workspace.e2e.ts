@@ -75,7 +75,18 @@ test('연결 정보는 안전한 메타데이터만 표시하고 결과를 조�
 		refreshRequests.push(route.request().postData() ?? '');
 		return route.fulfill({ json: authPayload(refreshedCredential, refreshedCredential) });
 	});
+	let additionalProductCalls = 0;
 	const operationResults = [
+		{
+			ok: false,
+			status: 429,
+			method: null,
+			productNo: 2175,
+			additionalProducts: [2176, 2178, 2179, 2180],
+			totalCount: null,
+			message: 'Cafe24 API 호출 한도에 도달했습니다.',
+			rateLimit: { callUsage: '100', callRemain: '0', timeUsage: '100', timeRemain: '0' }
+		},
 		{
 			ok: true,
 			status: 200,
@@ -96,6 +107,7 @@ test('연결 정보는 안전한 메타데이터만 표시하고 결과를 조�
 		}
 	];
 	await page.route('**/api/additional-products', (route) => {
+		additionalProductCalls += 1;
 		const result = operationResults.shift();
 		if (!result) return route.abort();
 		return route.fulfill({
@@ -103,7 +115,7 @@ test('연결 정보는 안전한 메타데이터만 표시하고 결과를 조�
 				ok: true,
 				result: {
 					...result,
-					rateLimit: {
+					rateLimit: result.rateLimit ?? {
 						callUsage: null,
 						callRemain: null,
 						timeUsage: null,
@@ -148,6 +160,7 @@ test('연결 정보는 안전한 메타데이터만 표시하고 결과를 조�
 	await expect(applyButton).toBeEnabled();
 	await applyButton.click();
 	await expect(page.getByText('반영을 마쳤지만 1개 행이 실패했습니다.')).toBeVisible();
+	expect(additionalProductCalls).toBe(3);
 	await expect(page.getByRole('button', { name: '실패 결과 확인 필요' })).toBeDisabled();
 	await expect(
 		page.getByText('실패한 행의 결과를 확인하고 CSV 또는 상품 상태를 수정한 뒤 다시 적용하세요.')
@@ -204,4 +217,42 @@ test('연결 정보는 안전한 메타데이터만 표시하고 결과를 조�
 	await page.reload();
 	await page.waitForLoadState('networkidle');
 	await expect(page.getByText('완료된 파일이 없습니다.')).toBeVisible();
+	await page.evaluate(async () => {
+		const database = await new Promise<IDBDatabase>((resolve, reject) => {
+			const request = indexedDB.open('cafe24-additional-products', 2);
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => reject(request.error);
+		});
+		await new Promise<void>((resolve, reject) => {
+			const transaction = database.transaction('jobs', 'readwrite');
+			const store = transaction.objectStore('jobs');
+			for (let index = 0; index < 12; index += 1) {
+				store.put({
+					id: `history-${index}`,
+					fileName: `completed-${index + 1}.csv`,
+					startedAt: `2026-09-01T00:${String(index).padStart(2, '0')}:00.000Z`,
+					completedAt: `2026-09-01T00:${String(index).padStart(2, '0')}:30.000Z`,
+					successCount: 1,
+					failureCount: 0,
+					total: 1,
+					status: 'completed',
+					results: []
+				});
+			}
+			transaction.oncomplete = () => resolve();
+			transaction.onerror = () => reject(transaction.error);
+		});
+		database.close();
+	});
+	await page.reload();
+	await page.waitForLoadState('networkidle');
+	const completedList = page.locator('.finished-job-list');
+	await expect(completedList.locator('.job-card')).toHaveCount(12);
+	expect(
+		await completedList.evaluate((element) => element.scrollHeight > element.clientHeight)
+	).toBe(true);
+	await page.screenshot({
+		path: testInfo.outputPath('completed-history-scroll.png'),
+		fullPage: true
+	});
 });

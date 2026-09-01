@@ -259,10 +259,26 @@ function safeRemoteText(value: unknown, maxLength: number) {
 
 function readRateLimit(headers: Headers): RateLimitSummary {
 	return {
-		callUsage: firstHeader(headers, ['X-Api-Call-Limit', 'X-Cafe24-Api-Call-Limit']),
-		callRemain: firstHeader(headers, ['X-Api-Call-Remaining', 'X-Cafe24-Api-Call-Remaining']),
-		timeUsage: firstHeader(headers, ['X-Api-Time-Limit', 'X-Cafe24-Api-Time-Limit']),
-		timeRemain: firstHeader(headers, ['X-Api-Time-Remaining', 'X-Cafe24-Api-Time-Remaining'])
+		callUsage: firstHeader(headers, [
+			'X-Cafe24-Call-Usage',
+			'X-Api-Call-Limit',
+			'X-Cafe24-Api-Call-Limit'
+		]),
+		callRemain: firstHeader(headers, [
+			'X-Cafe24-Call-Remain',
+			'X-Api-Call-Remaining',
+			'X-Cafe24-Api-Call-Remaining'
+		]),
+		timeUsage: firstHeader(headers, [
+			'X-Cafe24-Time-Usage',
+			'X-Api-Time-Limit',
+			'X-Cafe24-Api-Time-Limit'
+		]),
+		timeRemain: firstHeader(headers, [
+			'X-Cafe24-Time-Remain',
+			'X-Api-Time-Remaining',
+			'X-Cafe24-Api-Time-Remaining'
+		])
 	};
 }
 

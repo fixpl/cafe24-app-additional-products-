@@ -71,6 +71,8 @@
 <script lang="ts">
 	import Icon from '@iconify/svelte';
 	import uploadIcon from '@iconify-icons/material-symbols/cloud-upload-outline-rounded';
+	import deleteIcon from '@iconify-icons/material-symbols/delete-outline-rounded';
+	import deleteSweepIcon from '@iconify-icons/material-symbols/delete-sweep-outline-rounded';
 	import downloadIcon from '@iconify-icons/material-symbols/download-rounded';
 	import pendingIcon from '@iconify-icons/material-symbols/sync-rounded';
 	import successIcon from '@iconify-icons/material-symbols/check-circle-rounded';
@@ -430,16 +432,18 @@
 					{/if}
 				</section>
 
-				<section class="status-section">
+				<section class="status-section completed-section">
 					<div class="section-head">
 						<h2>진행완료</h2>
 						{#if finishedJobs.length > 0 && runningJobs.length === 0}
 							<button
-								class="history-clear-button"
+								class="icon-button history-clear-button"
 								type="button"
 								onclick={handlers.onClearCompletedJobs}
+								aria-label="완료 기록 전체 삭제"
+								title="완료 기록 전체 삭제"
 							>
-								완료 기록 전체 삭제
+								<Icon icon={deleteSweepIcon} width="18" height="18" />
 							</button>
 						{/if}
 					</div>
@@ -447,7 +451,7 @@
 					{#if finishedJobs.length === 0}
 						<div class="empty-panel">완료된 파일이 없습니다.</div>
 					{:else}
-						<div class="job-list">
+						<div class="job-list finished-job-list">
 							{#each finishedJobs as job (job.id)}
 								<article class="job-card">
 									<div class="job-main">
@@ -470,12 +474,13 @@
 												{job.status === 'completed' ? '완료' : '취소'}
 											</span>
 											<button
-												class="record-delete-button"
+												class="icon-button record-delete-button"
 												type="button"
 												onclick={() => handlers.onDeleteCompletedJob(job.id)}
 												aria-label={`${job.fileName} 완료 기록 삭제`}
+												title="완료 기록 삭제"
 											>
-												삭제
+												<Icon icon={deleteIcon} width="17" height="17" />
 											</button>
 										</div>
 									</div>
@@ -949,14 +954,17 @@
 		color: #2f3749;
 	}
 
-	.history-clear-button,
-	.record-delete-button {
+	.icon-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
 		border: 0;
-		padding: 4px;
-		font-size: 12px;
-		font-weight: 700;
+		padding: 0;
 		color: #a14a5c;
 		background: transparent;
+		border-radius: 6px;
 	}
 
 	.history-clear-button {
@@ -964,13 +972,11 @@
 		white-space: nowrap;
 	}
 
-	.history-clear-button:hover,
-	.record-delete-button:hover {
-		text-decoration: underline;
+	.icon-button:hover {
+		background: rgba(255, 238, 242, 0.9);
 	}
 
-	.history-clear-button:focus-visible,
-	.record-delete-button:focus-visible {
+	.icon-button:focus-visible {
 		outline: 2px solid rgba(159, 70, 89, 0.35);
 		outline-offset: 2px;
 		border-radius: 4px;
@@ -1031,6 +1037,39 @@
 		flex-direction: column;
 		align-items: flex-end;
 		gap: 4px;
+	}
+
+	@media (min-width: 981px) {
+		.workspace-board {
+			height: min(1020px, calc(100vh - 122px));
+			min-height: 620px;
+			align-items: stretch;
+			overflow: hidden;
+		}
+
+		.dropzone {
+			height: 100%;
+			min-height: 0;
+		}
+
+		.status-panel {
+			min-height: 0;
+			overflow: hidden;
+		}
+
+		.completed-section {
+			flex: 1;
+			min-height: 0;
+		}
+
+		.finished-job-list {
+			flex: 1;
+			min-height: 0;
+			overflow-y: auto;
+			padding-right: 6px;
+			overscroll-behavior: contain;
+			scrollbar-gutter: stable;
+		}
 	}
 
 	.job-actions {

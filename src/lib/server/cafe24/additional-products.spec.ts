@@ -53,10 +53,10 @@ function makeEnvelope(payload: TokenPayload) {
 	return encryptTokenPayload(payload);
 }
 
-function response(body: unknown, status = 200) {
+function response(body: unknown, status = 200, headers: HeadersInit = {}) {
 	return new Response(JSON.stringify(body), {
 		status,
-		headers: { 'content-type': 'application/json' }
+		headers: { 'content-type': 'application/json', ...headers }
 	});
 }
 
@@ -223,6 +223,35 @@ describe('executeAdditionalProductOperation', () => {
 			token: payload.accessToken
 		});
 		expect(result.result).toMatchObject({ ok: false, status: 404, method: null, productNo: 123 });
+	});
+
+	it('Cafe24 호출 제한 헤더를 결과에 보존한다', async () => {
+		const payload = makePayload();
+		const envelope = makeEnvelope(payload);
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			return init?.method === 'GET'
+				? response(additionalProductResponse(0))
+				: response(additionalProductResponse(2), 200, {
+						'X-Cafe24-Call-Usage': '75.5',
+						'X-Cafe24-Call-Remain': '12',
+						'X-Cafe24-Time-Usage': '25.4',
+						'X-Cafe24-Time-Remain': '3'
+					});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const result = await executeAdditionalProductOperation({
+			envelope,
+			sessionCookie: 'browser-session',
+			operation: { row: 2, productNo: 123, additionalProducts: [2001, 2002] }
+		});
+
+		expect(result.result.rateLimit).toEqual({
+			callUsage: '75.5',
+			callRemain: '12',
+			timeUsage: '25.4',
+			timeRemain: '3'
+		});
 	});
 
 	it('refresh 후에도 조회가 401이면 재로그인을 요구한다', async () => {

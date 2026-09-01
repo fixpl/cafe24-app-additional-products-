@@ -49,6 +49,9 @@
 	const ACCESS_TOKEN_REFRESH_BUFFER_MS = 5 * 60_000;
 	const MAX_SCHEDULED_REFRESH_DELAY_MS = 30 * 60_000;
 	const REFRESH_RETRY_DELAY_MS = 60_000;
+	const CAFE24_OPERATION_INTERVAL_MS = 1_100;
+	const CAFE24_RATE_LIMIT_RETRY_FALLBACK_MS = 1_000;
+	const CAFE24_RATE_LIMIT_RETRY_GUARD_MS = 250;
 
 	class ApiFailure extends Error {
 		readonly reauthorize: boolean;
@@ -359,7 +362,8 @@
 					const controller = new AbortController();
 					activeController = controller;
 					try {
-						const result = await applyOperation(operation, controller.signal);
+						const result = await applyOperationWithRateLimit(operation, controller.signal);
+						if (!result) break;
 						job.results.push({
 							row: operation.row,
 							productNo: operation.productNo,
@@ -419,7 +423,8 @@
 					job = { ...job, results: [...job.results] };
 					jobs = jobs.map((candidate) => (candidate.id === job.id ? job : candidate));
 					await saveUploadJob(job);
-					if (!cancelRequested && progressCurrent < progressTotal) await pause(550);
+					if (!cancelRequested && progressCurrent < progressTotal)
+						await pause(CAFE24_OPERATION_INTERVAL_MS);
 				}
 			});
 		} finally {
@@ -491,6 +496,46 @@
 			scheduleCredentialRefresh();
 		}
 		return payload.result;
+	}
+
+	async function applyOperationWithRateLimit(
+		operation: AdditionalProductOperation,
+		signal: AbortSignal
+	) {
+		while (!cancelRequested) {
+			const result = await applyOperation(operation, signal);
+			if (result.status !== 429) return result;
+
+			const retryDelay = getRateLimitRetryDelay(result.rateLimit);
+			progressLabel = `${operation.row}행 · 호출 한도 확인 중 · ${formatSeconds(retryDelay)} 후 재시도`;
+			const shouldRetry = await waitForRateLimitRetry(retryDelay);
+			if (!shouldRetry) return null;
+		}
+		return null;
+	}
+
+	function getRateLimitRetryDelay(rateLimit: AdditionalProductApiResponse['result']['rateLimit']) {
+		const remainingSeconds = [rateLimit.callRemain, rateLimit.timeRemain].flatMap((value) => {
+			if (value === null) return [];
+			const seconds = Number(value);
+			return Number.isFinite(seconds) && seconds >= 0 ? [seconds] : [];
+		});
+		if (remainingSeconds.length === 0) return CAFE24_RATE_LIMIT_RETRY_FALLBACK_MS;
+		return Math.ceil(Math.max(...remainingSeconds) * 1_000) + CAFE24_RATE_LIMIT_RETRY_GUARD_MS;
+	}
+
+	async function waitForRateLimitRetry(delay: number) {
+		let remaining = delay;
+		while (remaining > 0 && !cancelRequested) {
+			const wait = Math.min(remaining, 250);
+			await pause(wait);
+			remaining -= wait;
+		}
+		return !cancelRequested;
+	}
+
+	function formatSeconds(milliseconds: number) {
+		return `${Math.max(1, Math.ceil(milliseconds / 1_000))}초`;
 	}
 
 	function makeSummary(

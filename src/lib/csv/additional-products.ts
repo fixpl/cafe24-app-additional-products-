@@ -19,7 +19,7 @@ const ADDITIONAL_PRODUCT_HEADERS = Array.from(
 );
 const EXPECTED_HEADERS = [PRODUCT_NO_HEADER, ...ADDITIONAL_PRODUCT_HEADERS];
 const RECOGNIZED_HEADER_SET = new Set([...EXPECTED_HEADERS, LEGACY_METHOD_HEADER]);
-const MAX_DATA_ROWS = 200;
+const MAX_DATA_ROWS = 500;
 const MAX_PRODUCT_NO = 2_147_483_647;
 
 function parseCsv(text: string): { rows: ParsedCsvRow[]; issues: CsvIssue[] } {
