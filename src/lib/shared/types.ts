@@ -73,6 +73,14 @@ export interface UploadJobResult {
 	method: AdditionalProductMethod | null;
 	ok: boolean;
 	message: string;
+	/** CSV에서 요청한 추가구성상품 번호입니다. 기존 기록에는 없을 수 있습니다. */
+	requestedAdditionalProducts?: number[];
+	/** Cafe24 응답에 포함된 추가구성상품 번호입니다. */
+	returnedAdditionalProducts?: number[] | null;
+	/** 앱 endpoint 또는 Cafe24 요청의 HTTP 상태입니다. */
+	httpStatus?: number | null;
+	/** Cafe24 응답의 total_count입니다. */
+	totalCount?: number | null;
 }
 
 export interface UploadJobRecord {

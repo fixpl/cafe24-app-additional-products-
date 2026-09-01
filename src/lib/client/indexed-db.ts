@@ -58,6 +58,15 @@ export function saveUploadJob(record: UploadJobRecord) {
 	return writeStore(JOB_STORE, record);
 }
 
+export function deleteUploadJob(jobId: string) {
+	if (!jobId) return Promise.reject(new Error('삭제할 업로드 기록을 찾지 못했습니다.'));
+	return deleteFromStore(JOB_STORE, jobId);
+}
+
+export function clearUploadJobs() {
+	return clearStore(JOB_STORE);
+}
+
 export async function withCredentialLock<T>(task: () => Promise<T>): Promise<T> {
 	if (navigator.locks?.request) {
 		return navigator.locks.request(
@@ -123,6 +132,23 @@ async function deleteFromStore(storeName: string, key: IDBValidKey) {
 			transaction.oncomplete = () => resolve();
 			transaction.onerror = () =>
 				reject(transaction.error ?? new Error('IndexedDB 삭제에 실패했습니다.'));
+		});
+	} finally {
+		db.close();
+	}
+}
+
+async function clearStore(storeName: string) {
+	const db = await openDatabase();
+	try {
+		await new Promise<void>((resolve, reject) => {
+			const transaction = db.transaction(storeName, 'readwrite');
+			transaction.objectStore(storeName).clear();
+			transaction.oncomplete = () => resolve();
+			transaction.onerror = () =>
+				reject(transaction.error ?? new Error('IndexedDB 기록 삭제에 실패했습니다.'));
+			transaction.onabort = () =>
+				reject(transaction.error ?? new Error('IndexedDB 기록 삭제가 취소되었습니다.'));
 		});
 	} finally {
 		db.close();

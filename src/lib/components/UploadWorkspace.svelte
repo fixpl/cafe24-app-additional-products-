@@ -27,6 +27,18 @@
 		label?: string;
 	}
 
+	export interface UploadWorkspaceJobResult {
+		row: number;
+		productNo: number;
+		method: 'POST' | 'PUT' | null;
+		ok: boolean;
+		message: string;
+		requestedAdditionalProducts?: number[];
+		returnedAdditionalProducts?: number[] | null;
+		httpStatus?: number | null;
+		totalCount?: number | null;
+	}
+
 	export interface UploadWorkspaceJob {
 		id: string;
 		fileName: string;
@@ -36,12 +48,16 @@
 		failureCount: number;
 		total: number;
 		status: 'running' | 'completed' | 'cancelled';
+		results: UploadWorkspaceJobResult[];
 		note?: string;
 	}
 
 	export interface UploadWorkspaceHandlers {
 		onFile: (file: File) => void;
 		onDownload: () => void;
+		onDownloadResults: (jobId: string) => void;
+		onDeleteCompletedJob: (jobId: string) => void;
+		onClearCompletedJobs: () => void;
 		onApply: () => void;
 		onCancel: () => void;
 	}
@@ -88,9 +104,21 @@
 
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let dragActive = $state(false);
+	let expandedResultJobId = $state<string | null>(null);
 
 	const runningJobs = $derived(jobs.filter((job) => job.status === 'running'));
 	const finishedJobs = $derived(jobs.filter((job) => job.status !== 'running'));
+	const applyButtonLabel = $derived(
+		phase === 'running'
+			? 'Cafe24에 적용 중'
+			: canApply
+				? 'Cafe24에 적용하기'
+				: summary?.failure
+					? '실패 결과 확인 필요'
+					: selectedFileName
+						? 'CSV 확인 후 Cafe24에 적용'
+						: '파일 선택 후 Cafe24에 적용'
+	);
 
 	function formatDate(value: string | undefined | null) {
 		if (!value) return '-';
@@ -148,6 +176,24 @@
 		if (file) {
 			handlers.onFile(file);
 		}
+	}
+
+	function toggleResults(jobId: string) {
+		expandedResultJobId = expandedResultJobId === jobId ? null : jobId;
+	}
+
+	function formatProductNumbers(value: number[] | null | undefined) {
+		return value && value.length > 0 ? value.join(', ') : '-';
+	}
+
+	function formatResponseSummary(
+		httpStatus: number | null | undefined,
+		totalCount: number | null | undefined
+	) {
+		const status = httpStatus ? `HTTP ${httpStatus}` : 'HTTP 상태 없음';
+		return totalCount === null || totalCount === undefined
+			? status
+			: `${status} · 총 ${totalCount}개`;
 	}
 </script>
 
@@ -218,7 +264,7 @@
 						<Icon icon={uploadIcon} width="88" height="88" />
 					</div>
 					<p class="dropzone-copy">
-						첨부할 파일 드래그 또는 <strong>선택</strong>
+						CSV 파일 드래그 또는 <strong>선택</strong>
 					</p>
 					<p class="dropzone-file">
 						{selectedFileName ? `선택 파일: ${selectedFileName}` : '선택된 파일이 없습니다.'}
@@ -229,13 +275,26 @@
 				</button>
 
 				<div class="dropzone-actions">
+					{#if selectedFileName && auth}
+						<p class={`apply-hint ${canApply ? 'ready' : ''}`} aria-live="polite">
+							{#if phase === 'running'}
+								Cafe24에 적용하고 있습니다. 완료 후 행별 결과를 확인할 수 있습니다.
+							{:else if summary?.failure}
+								실패한 행의 결과를 확인하고 CSV 또는 상품 상태를 수정한 뒤 다시 적용하세요.
+							{:else if canApply}
+								CSV 확인을 마쳤습니다. 아래 버튼을 누르면 Cafe24에 실제로 등록 또는 수정됩니다.
+							{:else}
+								CSV 오류를 수정한 뒤 Cafe24에 적용할 수 있습니다.
+							{/if}
+						</p>
+					{/if}
 					<button
 						class="primary-button"
 						type="button"
 						onclick={handlers.onApply}
 						disabled={!canApply || phase !== 'ready'}
 					>
-						{phase === 'running' ? '업로드 처리 중' : 'CSV 업로드'}
+						{applyButtonLabel}
 					</button>
 				</div>
 			</div>
@@ -306,6 +365,65 @@
 									{#if job.note}
 										<p class="job-note">{job.note}</p>
 									{/if}
+									{#if job.results.length > 0}
+										<div class="job-actions">
+											<button
+												class="secondary-button compact"
+												type="button"
+												onclick={() => toggleResults(job.id)}
+												aria-expanded={expandedResultJobId === job.id}
+												aria-controls={`job-results-${job.id}`}
+											>
+												{expandedResultJobId === job.id ? '결과 숨기기' : '결과 보기'}
+											</button>
+											<button
+												class="secondary-button compact"
+												type="button"
+												onclick={() => handlers.onDownloadResults(job.id)}
+											>
+												<Icon icon={downloadIcon} width="16" height="16" />
+												결과 CSV 다운로드
+											</button>
+										</div>
+
+										{#if expandedResultJobId === job.id}
+											<div class="result-table-wrap" id={`job-results-${job.id}`}>
+												<table class="result-table">
+													<thead>
+														<tr>
+															<th scope="col">행</th>
+															<th scope="col">기준상품</th>
+															<th scope="col">요청 추가상품</th>
+															<th scope="col">Cafe24 응답 추가상품</th>
+															<th scope="col">처리</th>
+															<th scope="col">결과</th>
+															<th scope="col">Cafe24 응답 메시지</th>
+														</tr>
+													</thead>
+													<tbody>
+														{#each job.results as result (result.row)}
+															<tr>
+																<td>{result.row}</td>
+																<td>{result.productNo}</td>
+																<td>{formatProductNumbers(result.requestedAdditionalProducts)}</td>
+																<td>{formatProductNumbers(result.returnedAdditionalProducts)}</td>
+																<td>{result.method ?? '-'}</td>
+																<td>
+																	<span class={`result-badge ${result.ok ? 'success' : 'failure'}`}>
+																		{result.ok ? '성공' : '실패'}
+																	</span>
+																	<span class="http-status">
+																		{formatResponseSummary(result.httpStatus, result.totalCount)}
+																	</span>
+																</td>
+																<td class="result-message">{result.message}</td>
+															</tr>
+														{/each}
+													</tbody>
+												</table>
+											</div>
+										{/if}
+									{/if}
 								</article>
 							{/each}
 						</div>
@@ -315,6 +433,15 @@
 				<section class="status-section">
 					<div class="section-head">
 						<h2>진행완료</h2>
+						{#if finishedJobs.length > 0 && runningJobs.length === 0}
+							<button
+								class="history-clear-button"
+								type="button"
+								onclick={handlers.onClearCompletedJobs}
+							>
+								완료 기록 전체 삭제
+							</button>
+						{/if}
 					</div>
 
 					{#if finishedJobs.length === 0}
@@ -331,19 +458,88 @@
 												{job.failureCount}
 											</p>
 										</div>
-										<span
-											class={`job-badge ${job.status === 'completed' ? 'completed' : 'cancelled'}`}
-										>
-											<Icon
-												icon={job.status === 'completed' ? successIcon : warningIcon}
-												width="16"
-												height="16"
-											/>
-											{job.status === 'completed' ? '완료' : '취소'}
-										</span>
+										<div class="job-status">
+											<span
+												class={`job-badge ${job.status === 'completed' ? 'completed' : 'cancelled'}`}
+											>
+												<Icon
+													icon={job.status === 'completed' ? successIcon : warningIcon}
+													width="16"
+													height="16"
+												/>
+												{job.status === 'completed' ? '완료' : '취소'}
+											</span>
+											<button
+												class="record-delete-button"
+												type="button"
+												onclick={() => handlers.onDeleteCompletedJob(job.id)}
+												aria-label={`${job.fileName} 완료 기록 삭제`}
+											>
+												삭제
+											</button>
+										</div>
 									</div>
 									{#if job.note}
 										<p class="job-note">{job.note}</p>
+									{/if}
+									{#if job.results.length > 0}
+										<div class="job-actions">
+											<button
+												class="secondary-button compact"
+												type="button"
+												onclick={() => toggleResults(job.id)}
+												aria-expanded={expandedResultJobId === job.id}
+												aria-controls={`job-results-${job.id}`}
+											>
+												{expandedResultJobId === job.id ? '결과 숨기기' : '결과 보기'}
+											</button>
+											<button
+												class="secondary-button compact"
+												type="button"
+												onclick={() => handlers.onDownloadResults(job.id)}
+											>
+												<Icon icon={downloadIcon} width="16" height="16" />
+												결과 CSV 다운로드
+											</button>
+										</div>
+
+										{#if expandedResultJobId === job.id}
+											<div class="result-table-wrap" id={`job-results-${job.id}`}>
+												<table class="result-table">
+													<thead>
+														<tr>
+															<th scope="col">행</th>
+															<th scope="col">기준상품</th>
+															<th scope="col">요청 추가상품</th>
+															<th scope="col">Cafe24 응답 추가상품</th>
+															<th scope="col">처리</th>
+															<th scope="col">결과</th>
+															<th scope="col">Cafe24 응답 메시지</th>
+														</tr>
+													</thead>
+													<tbody>
+														{#each job.results as result (result.row)}
+															<tr>
+																<td>{result.row}</td>
+																<td>{result.productNo}</td>
+																<td>{formatProductNumbers(result.requestedAdditionalProducts)}</td>
+																<td>{formatProductNumbers(result.returnedAdditionalProducts)}</td>
+																<td>{result.method ?? '-'}</td>
+																<td>
+																	<span class={`result-badge ${result.ok ? 'success' : 'failure'}`}>
+																		{result.ok ? '성공' : '실패'}
+																	</span>
+																	<span class="http-status">
+																		{formatResponseSummary(result.httpStatus, result.totalCount)}
+																	</span>
+																</td>
+																<td class="result-message">{result.message}</td>
+															</tr>
+														{/each}
+													</tbody>
+												</table>
+											</div>
+										{/if}
 									{/if}
 								</article>
 							{/each}
@@ -613,8 +809,22 @@
 	.dropzone-actions {
 		display: flex;
 		flex-wrap: wrap;
+		flex-direction: column;
 		gap: 12px;
+		align-items: center;
 		justify-content: center;
+	}
+
+	.apply-hint {
+		max-width: 280px;
+		font-size: 13px;
+		line-height: 1.55;
+		color: #69748a;
+		text-align: center;
+	}
+
+	.apply-hint.ready {
+		color: #315f4f;
 	}
 
 	.primary-button {
@@ -720,14 +930,15 @@
 	}
 
 	.section-head {
-		display: grid;
-		grid-template-columns: auto 1fr;
+		display: flex;
 		align-items: center;
-		gap: 18px;
+		gap: 12px;
 	}
 
 	.section-head::after {
 		content: '';
+		order: 1;
+		flex: 1;
 		height: 1px;
 		background: rgba(225, 228, 236, 0.98);
 	}
@@ -736,6 +947,33 @@
 		font-size: 17px;
 		font-weight: 700;
 		color: #2f3749;
+	}
+
+	.history-clear-button,
+	.record-delete-button {
+		border: 0;
+		padding: 4px;
+		font-size: 12px;
+		font-weight: 700;
+		color: #a14a5c;
+		background: transparent;
+	}
+
+	.history-clear-button {
+		order: 2;
+		white-space: nowrap;
+	}
+
+	.history-clear-button:hover,
+	.record-delete-button:hover {
+		text-decoration: underline;
+	}
+
+	.history-clear-button:focus-visible,
+	.record-delete-button:focus-visible {
+		outline: 2px solid rgba(159, 70, 89, 0.35);
+		outline-offset: 2px;
+		border-radius: 4px;
 	}
 
 	.empty-panel {
@@ -786,6 +1024,95 @@
 
 	.job-note {
 		margin-top: 10px;
+	}
+
+	.job-status {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 4px;
+	}
+
+	.job-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 14px;
+	}
+
+	.result-table-wrap {
+		margin-top: 14px;
+		overflow-x: auto;
+		border: 1px solid #e2e7ef;
+		border-radius: 6px;
+		background: #fff;
+	}
+
+	.result-table {
+		width: 100%;
+		min-width: 760px;
+		border-collapse: collapse;
+		font-size: 13px;
+		color: #49546a;
+	}
+
+	.result-table th,
+	.result-table td {
+		padding: 12px 14px;
+		border-bottom: 1px solid #edf0f4;
+		text-align: left;
+		vertical-align: top;
+	}
+
+	.result-table th {
+		font-size: 12px;
+		font-weight: 700;
+		white-space: nowrap;
+		color: #66728a;
+		background: #f8fafc;
+	}
+
+	.result-table tbody tr:last-child td {
+		border-bottom: 0;
+	}
+
+	.result-table td:nth-child(1),
+	.result-table td:nth-child(2),
+	.result-table td:nth-child(5) {
+		white-space: nowrap;
+	}
+
+	.result-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 4px 8px;
+		border-radius: 999px;
+		font-size: 12px;
+		font-weight: 700;
+	}
+
+	.result-badge.success {
+		color: #1d7256;
+		background: rgba(236, 250, 243, 0.98);
+	}
+
+	.result-badge.failure {
+		color: #9e3b50;
+		background: rgba(255, 238, 242, 0.98);
+	}
+
+	.http-status {
+		display: block;
+		margin-top: 5px;
+		font-size: 12px;
+		color: #768198;
+		white-space: nowrap;
+	}
+
+	.result-message {
+		min-width: 240px;
+		line-height: 1.55;
+		word-break: break-word;
 	}
 
 	.job-badge {
@@ -905,6 +1232,18 @@
 
 		.issue-section li {
 			grid-template-columns: 1fr;
+		}
+
+		.job-actions {
+			align-items: stretch;
+		}
+
+		.job-actions .secondary-button {
+			flex: 1 1 160px;
+		}
+
+		.job-status {
+			align-items: flex-start;
 		}
 	}
 </style>

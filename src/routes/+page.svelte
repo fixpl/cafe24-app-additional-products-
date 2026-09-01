@@ -2,7 +2,9 @@
 	import { onMount } from 'svelte';
 	import UploadWorkspace from '$lib/components/UploadWorkspace.svelte';
 	import {
+		clearUploadJobs,
 		clearTokenCredential,
+		deleteUploadJob,
 		loadTokenCredential,
 		loadUploadJobs,
 		saveTokenCredential,
@@ -10,6 +12,7 @@
 		withCredentialLock
 	} from '$lib/client/indexed-db';
 	import { createTemplateCsv, parseAdditionalProductsCsv } from '$lib/csv/additional-products';
+	import { createUploadResultsCsv, createUploadResultsFileName } from '$lib/csv/upload-results';
 	import type {
 		AdditionalProductApiResponse,
 		AdditionalProductOperation,
@@ -49,10 +52,12 @@
 
 	class ApiFailure extends Error {
 		readonly reauthorize: boolean;
+		readonly status: number | null;
 
-		constructor(message: string, reauthorize = false) {
+		constructor(message: string, reauthorize = false, status: number | null = null) {
 			super(message);
 			this.reauthorize = reauthorize;
+			this.status = status;
 		}
 	}
 
@@ -274,6 +279,47 @@
 		URL.revokeObjectURL(url);
 	}
 
+	function downloadResults(jobId: string) {
+		const job = jobs.find((candidate) => candidate.id === jobId);
+		if (!job || job.results.length === 0) return;
+		const blob = new Blob([createUploadResultsCsv(job)], { type: 'text/csv;charset=utf-8' });
+		const url = URL.createObjectURL(blob);
+		const anchor = document.createElement('a');
+		anchor.href = url;
+		anchor.download = createUploadResultsFileName(job.fileName);
+		anchor.click();
+		URL.revokeObjectURL(url);
+	}
+
+	async function deleteCompletedJob(jobId: string) {
+		const job = jobs.find((candidate) => candidate.id === jobId);
+		if (!job || job.status === 'running') return;
+		if (!window.confirm(`완료 기록 "${job.fileName}"을(를) 삭제할까요?`)) return;
+
+		try {
+			await deleteUploadJob(jobId);
+			jobs = jobs.filter((candidate) => candidate.id !== jobId);
+			banner = { kind: 'info', message: '완료 기록을 삭제했습니다.' };
+		} catch {
+			banner = { kind: 'error', message: '완료 기록을 삭제하지 못했습니다.' };
+		}
+	}
+
+	async function clearCompletedJobs() {
+		if (jobs.some((job) => job.status === 'running')) return;
+		const completedCount = jobs.length;
+		if (completedCount === 0) return;
+		if (!window.confirm(`완료 기록 ${completedCount}건을 모두 삭제할까요?`)) return;
+
+		try {
+			await clearUploadJobs();
+			jobs = [];
+			banner = { kind: 'info', message: `완료 기록 ${completedCount}건을 모두 삭제했습니다.` };
+		} catch {
+			banner = { kind: 'error', message: '완료 기록을 삭제하지 못했습니다.' };
+		}
+	}
+
 	function cancelUpload() {
 		cancelRequested = true;
 		activeController?.abort();
@@ -319,7 +365,11 @@
 							productNo: operation.productNo,
 							method: result.method,
 							ok: result.ok,
-							message: result.message
+							message: result.message,
+							requestedAdditionalProducts: [...operation.additionalProducts],
+							returnedAdditionalProducts: result.ok ? [...result.additionalProducts] : null,
+							httpStatus: result.status,
+							totalCount: result.totalCount
 						});
 						if (result.ok) job.successCount += 1;
 						else {
@@ -346,7 +396,11 @@
 							productNo: operation.productNo,
 							method: null,
 							ok: false,
-							message: failure.message
+							message: failure.message,
+							requestedAdditionalProducts: [...operation.additionalProducts],
+							returnedAdditionalProducts: null,
+							httpStatus: failure.status,
+							totalCount: null
 						});
 						job.failureCount += 1;
 						if (failure.reauthorize) {
@@ -410,11 +464,17 @@
 			body: JSON.stringify({ envelope: credential.envelope, operation }),
 			signal
 		});
-		const payload = (await response.json()) as AdditionalProductApiResponse | ApiErrorResponse;
+		let payload: AdditionalProductApiResponse | ApiErrorResponse;
+		try {
+			payload = (await response.json()) as AdditionalProductApiResponse | ApiErrorResponse;
+		} catch {
+			throw new ApiFailure('Cafe24 처리 결과를 읽지 못했습니다.', false, response.status);
+		}
 		if (!response.ok || !payload.ok) {
 			throw new ApiFailure(
 				payload.ok ? 'Cafe24 요청이 실패했습니다.' : payload.error.message,
-				payload.ok ? false : payload.error.reauthorize
+				payload.ok ? false : payload.error.reauthorize,
+				response.status
 			);
 		}
 		if (payload.credential) {
@@ -470,6 +530,9 @@
 			handlers={{
 				onFile: selectFile,
 				onDownload: downloadTemplate,
+				onDownloadResults: downloadResults,
+				onDeleteCompletedJob: deleteCompletedJob,
+				onClearCompletedJobs: clearCompletedJobs,
 				onApply: applyUpload,
 				onCancel: cancelUpload
 			}}
