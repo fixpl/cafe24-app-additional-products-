@@ -1,8 +1,4 @@
-import type {
-	AdditionalProductMethod,
-	AdditionalProductOperation,
-	CsvIssue
-} from '$lib/shared/types';
+import type { AdditionalProductOperation, CsvIssue } from '$lib/shared/types';
 
 export type {
 	AdditionalProductMethod,
@@ -15,14 +11,14 @@ interface ParsedCsvRow {
 	cells: string[];
 }
 
-const METHOD_HEADER = '처리방식';
+const LEGACY_METHOD_HEADER = '처리방식';
 const PRODUCT_NO_HEADER = '기준상품번호';
 const ADDITIONAL_PRODUCT_HEADERS = Array.from(
 	{ length: 10 },
 	(_, index) => `추가구성상품번호${index + 1}`
 );
-const EXPECTED_HEADERS = [METHOD_HEADER, PRODUCT_NO_HEADER, ...ADDITIONAL_PRODUCT_HEADERS];
-const EXPECTED_HEADER_SET = new Set(EXPECTED_HEADERS);
+const EXPECTED_HEADERS = [PRODUCT_NO_HEADER, ...ADDITIONAL_PRODUCT_HEADERS];
+const RECOGNIZED_HEADER_SET = new Set([...EXPECTED_HEADERS, LEGACY_METHOD_HEADER]);
 const MAX_DATA_ROWS = 200;
 const MAX_PRODUCT_NO = 2_147_483_647;
 
@@ -129,7 +125,7 @@ function validateHeaders(headerRow: ParsedCsvRow): CsvIssue[] {
 			seenHeaders.add(header);
 		}
 
-		if (!EXPECTED_HEADER_SET.has(header)) {
+		if (!RECOGNIZED_HEADER_SET.has(header)) {
 			issues.push({
 				row: headerRow.row,
 				column: header || undefined,
@@ -149,19 +145,6 @@ function validateHeaders(headerRow: ParsedCsvRow): CsvIssue[] {
 	}
 
 	return issues;
-}
-
-function parseMethod(value: string): AdditionalProductMethod | undefined {
-	switch (value.trim().toUpperCase()) {
-		case '등록':
-		case 'POST':
-			return 'POST';
-		case '수정':
-		case 'PUT':
-			return 'PUT';
-		default:
-			return undefined;
-	}
 }
 
 function parseProductNumber(value: string): number | undefined {
@@ -200,7 +183,6 @@ export function parseAdditionalProductsCsv(text: string): {
 	}
 
 	const headerIndexes = indexHeaders(headerRow.cells);
-	const methodIndex = headerIndexes.get(METHOD_HEADER)!;
 	const productNoIndex = headerIndexes.get(PRODUCT_NO_HEADER)!;
 	const additionalProductIndexes = ADDITIONAL_PRODUCT_HEADERS.map((header) =>
 		headerIndexes.get(header)!
@@ -226,15 +208,6 @@ export function parseAdditionalProductsCsv(text: string): {
 		}
 
 		const rowIssues: CsvIssue[] = [];
-		const method = parseMethod(dataRow.cells[methodIndex] ?? '');
-		if (!method) {
-			rowIssues.push({
-				row: dataRow.row,
-				column: METHOD_HEADER,
-				message: '처리방식은 등록/POST 또는 수정/PUT만 입력할 수 있습니다.'
-			});
-		}
-
 		const productNo = parseProductNumber(dataRow.cells[productNoIndex] ?? '');
 		if (productNo === undefined) {
 			rowIssues.push({
@@ -319,10 +292,9 @@ export function parseAdditionalProductsCsv(text: string): {
 		}
 
 		issues.push(...rowIssues);
-		if (rowIssues.length === 0 && method && productNo !== undefined) {
+		if (rowIssues.length === 0 && productNo !== undefined) {
 			operations.push({
 				row: dataRow.row,
-				method,
 				productNo,
 				additionalProducts
 			});

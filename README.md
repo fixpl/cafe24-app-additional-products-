@@ -11,12 +11,13 @@ Cafe24 OAuth로 로그인한 뒤 CSV를 검증하고, 기준상품별 추가구�
 - `mall.read_application`
 - `mall.write_application`
 
-실제 상품 변경 호출은 Cafe24 Admin API의 아래 두 요청으로 제한합니다.
+앱은 먼저 같은 추가구성상품 리소스의 `GET`으로 기존 설정을 조회하고, 결과에 따라 아래 변경 요청을 자동 선택합니다.
 
+- 조회: `GET https://{mall_id}.cafe24api.com/api/v2/admin/products/{product_no}/additionalproducts`
 - 등록: `POST https://{mall_id}.cafe24api.com/api/v2/admin/products/{product_no}/additionalproducts`
 - 수정: `PUT https://{mall_id}.cafe24api.com/api/v2/admin/products/{product_no}/additionalproducts`
 
-요청 본문은 `request.additional_products`에 추가구성상품 번호 배열을 전달합니다. 일반 상품 등록, 상품 수정, 삭제 또는 다른 Cafe24 API는 이 앱의 범위가 아닙니다.
+조회 결과 `total_count`가 0이면 `POST`, 하나 이상이면 `PUT`을 사용합니다. 요청 본문은 `request.additional_products`에 추가구성상품 번호 배열을 전달합니다. 일반 상품 등록, 상품 수정, 삭제 또는 다른 Cafe24 API는 이 앱의 범위가 아닙니다.
 
 ## 인증과 토큰 보관
 
@@ -56,12 +57,12 @@ Cafe24 개발자센터는 subdomain을 사용하는 경우 Redirect URI(s)에 �
 헤더는 아래 순서와 이름을 그대로 사용합니다.
 
 ```text
-처리방식,기준상품번호,추가구성상품번호1,추가구성상품번호2,...,추가구성상품번호10
+기준상품번호,추가구성상품번호1,추가구성상품번호2,...,추가구성상품번호10
 ```
 
-- `처리방식`: `등록`/`POST` 또는 `수정`/`PUT`
 - `기준상품번호`: 추가구성상품을 연결할 기준 상품번호
 - `추가구성상품번호1` ~ `추가구성상품번호10`: 연결할 상품번호
+- 기존 양식의 `처리방식` 열은 남겨도 되지만 값은 무시합니다. 새 양식에는 포함하지 않습니다.
 - 한 기준상품에는 추가구성상품을 1개 이상, 최대 10개까지 입력
 - 파일 하나에는 데이터 행을 최대 200개까지 입력
 - 같은 기준상품번호의 중복 행, 추가구성상품번호 중복, 기준상품 자체를 추가구성상품으로 지정한 행은 오류 처리

@@ -1,4 +1,5 @@
 import type {
+	AdditionalProductMethod,
 	AdditionalProductOperation,
 	AdditionalProductResult,
 	RateLimitSummary,
@@ -25,6 +26,17 @@ interface RemoteCall {
 	rateLimit: RateLimitSummary;
 }
 
+interface Cafe24Request {
+	method: 'GET' | AdditionalProductMethod;
+	operation: AdditionalProductOperation;
+}
+
+interface Cafe24RequestOutcome {
+	payload: TokenPayload;
+	remote: RemoteCall;
+	refreshed: boolean;
+}
+
 export async function executeAdditionalProductOperation(params: {
 	envelope: string;
 	sessionCookie: string | undefined;
@@ -35,35 +47,32 @@ export async function executeAdditionalProductOperation(params: {
 	assertSessionBinding(decrypted.payload, params.sessionCookie);
 	let payload = decrypted.payload;
 	let credentialChanged = decrypted.needsKeyRotation;
-	let refreshedBeforeCall = false;
+	let refreshed = false;
 	if (isExpiring(payload.accessTokenExpiresAt, ACCESS_TOKEN_REFRESH_BUFFER_MS)) {
 		payload = await refreshCafe24Token(payload);
 		credentialChanged = true;
-		refreshedBeforeCall = true;
+		refreshed = true;
 	}
-	let remote = await callCafe24AdditionalProducts(payload, operation);
-	if (remote.status === 401) {
-		if (refreshedBeforeCall) {
-			throw new PublicError(
-				401,
-				'CAFE24_REAUTHORIZE',
-				'Cafe24 로그인이 유효하지 않습니다. 다시 로그인해주세요.',
-				true
-			);
-		}
-		payload = await refreshCafe24Token(payload);
-		credentialChanged = true;
-		remote = await callCafe24AdditionalProducts(payload, operation);
-		if (remote.status === 401) {
-			throw new PublicError(
-				401,
-				'CAFE24_REAUTHORIZE',
-				'Cafe24 로그인이 유효하지 않습니다. 다시 로그인해주세요.',
-				true
-			);
-		}
+
+	const current = await callCafe24WithRefresh(payload, { method: 'GET', operation }, refreshed);
+	payload = current.payload;
+	refreshed = current.refreshed;
+	credentialChanged ||= refreshed;
+	if (!current.remote.ok) {
+		return {
+			result: failureResult(current.remote, operation, null),
+			credential: credentialChanged
+				? toTokenEnvelopeRecord(payload, encryptTokenPayload(payload))
+				: null
+		};
 	}
-	const result = normalizeResult(remote, operation);
+
+	const method = resolveAdditionalProductMethod(current.remote, operation);
+	const write = await callCafe24WithRefresh(payload, { method, operation }, refreshed);
+	payload = write.payload;
+	refreshed = write.refreshed;
+	credentialChanged ||= refreshed;
+	const result = normalizeResult(write.remote, operation, method);
 	let credential: TokenEnvelopeRecord | null = null;
 	if (credentialChanged) {
 		const envelope = encryptTokenPayload(payload);
@@ -72,25 +81,52 @@ export async function executeAdditionalProductOperation(params: {
 	return { result, credential };
 }
 
-async function callCafe24AdditionalProducts(
+async function callCafe24WithRefresh(
 	payload: TokenPayload,
-	operation: AdditionalProductOperation
-) {
+	request: Cafe24Request,
+	alreadyRefreshed: boolean
+): Promise<Cafe24RequestOutcome> {
+	let remote = await callCafe24AdditionalProducts(payload, request);
+	if (remote.status !== 401) return { payload, remote, refreshed: alreadyRefreshed };
+	if (alreadyRefreshed) throw reauthorizationRequired();
+
+	const refreshedPayload = await refreshCafe24Token(payload);
+	remote = await callCafe24AdditionalProducts(refreshedPayload, request);
+	if (remote.status === 401) throw reauthorizationRequired();
+	return { payload: refreshedPayload, remote, refreshed: true };
+}
+
+function reauthorizationRequired() {
+	return new PublicError(
+		401,
+		'CAFE24_REAUTHORIZE',
+		'Cafe24 로그인이 유효하지 않습니다. 다시 로그인해주세요.',
+		true
+	);
+}
+
+async function callCafe24AdditionalProducts(payload: TokenPayload, request: Cafe24Request) {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), getRequestTimeoutMs());
 	let response: Response;
 	try {
+		const headers: Record<string, string> = {
+			authorization: `Bearer ${payload.accessToken}`,
+			accept: 'application/json',
+			'X-Cafe24-Api-Version': getCafe24ApiVersion()
+		};
+		if (request.method !== 'GET') headers['content-type'] = 'application/json';
 		response = await fetch(
-			`https://${payload.mallId}.cafe24api.com/api/v2/admin/products/${operation.productNo}/additionalproducts`,
+			`https://${payload.mallId}.cafe24api.com/api/v2/admin/products/${request.operation.productNo}/additionalproducts`,
 			{
-				method: operation.method,
-				headers: {
-					authorization: `Bearer ${payload.accessToken}`,
-					accept: 'application/json',
-					'content-type': 'application/json',
-					'X-Cafe24-Api-Version': getCafe24ApiVersion()
-				},
-				body: JSON.stringify({ request: { additional_products: operation.additionalProducts } }),
+				method: request.method,
+				headers,
+				body:
+					request.method === 'GET'
+						? undefined
+						: JSON.stringify({
+								request: { additional_products: request.operation.additionalProducts }
+							}),
 				signal: controller.signal
 			}
 		);
@@ -117,31 +153,70 @@ async function callCafe24AdditionalProducts(
 	} satisfies RemoteCall;
 }
 
+function resolveAdditionalProductMethod(remote: RemoteCall, operation: AdditionalProductOperation) {
+	const current = parseAdditionalProductResponse(remote.body);
+	if (current.productNo !== operation.productNo) {
+		throw new PublicError(
+			502,
+			'CAFE24_RESPONSE_INVALID',
+			'Cafe24 추가구성상품 조회 결과의 기준상품번호가 일치하지 않습니다.'
+		);
+	}
+	return current.totalCount > 0 ? 'PUT' : 'POST';
+}
+
 function normalizeResult(
 	remote: RemoteCall,
-	operation: AdditionalProductOperation
+	operation: AdditionalProductOperation,
+	method: AdditionalProductMethod
 ): AdditionalProductResult {
-	if (!remote.ok) {
-		return {
-			ok: false,
-			status: remote.status,
-			productNo: operation.productNo,
-			additionalProducts: operation.additionalProducts,
-			totalCount: null,
-			message: remoteErrorMessage(remote.body, remote.status),
-			rateLimit: remote.rateLimit
-		};
-	}
+	if (!remote.ok) return failureResult(remote, operation, method);
+	const response = parseAdditionalProductResponse(remote.body);
+	return {
+		ok: true,
+		status: remote.status,
+		method,
+		productNo: response.productNo,
+		additionalProducts: response.additionalProducts,
+		totalCount: response.totalCount,
+		message: method === 'POST' ? '등록했습니다.' : '수정했습니다.',
+		rateLimit: remote.rateLimit
+	};
+}
+
+function failureResult(
+	remote: RemoteCall,
+	operation: AdditionalProductOperation,
+	method: AdditionalProductMethod | null
+): AdditionalProductResult {
+	return {
+		ok: false,
+		status: remote.status,
+		method,
+		productNo: operation.productNo,
+		additionalProducts: operation.additionalProducts,
+		totalCount: null,
+		message: remoteErrorMessage(remote.body, remote.status),
+		rateLimit: remote.rateLimit
+	};
+}
+
+function parseAdditionalProductResponse(body: unknown): {
+	productNo: number;
+	additionalProducts: number[];
+	totalCount: number;
+} {
 	const response =
-		isRecord(remote.body) && isRecord(remote.body.additionalproduct)
-			? remote.body.additionalproduct
-			: null;
+		isRecord(body) && isRecord(body.additionalproduct) ? body.additionalproduct : null;
 	const responseProducts = response?.additional_products;
+	const totalCount = response?.total_count;
 	if (
 		!response ||
 		!Number.isInteger(response.product_no) ||
 		!Array.isArray(responseProducts) ||
-		!responseProducts.every((value) => Number.isInteger(value))
+		!responseProducts.every((value) => Number.isInteger(value)) ||
+		!Number.isInteger(totalCount) ||
+		Number(totalCount) < 0
 	) {
 		throw new PublicError(
 			502,
@@ -150,13 +225,9 @@ function normalizeResult(
 		);
 	}
 	return {
-		ok: true,
-		status: remote.status,
 		productNo: Number(response.product_no),
 		additionalProducts: responseProducts.map(Number),
-		totalCount: Number.isInteger(response.total_count) ? Number(response.total_count) : null,
-		message: operation.method === 'POST' ? '등록했습니다.' : '수정했습니다.',
-		rateLimit: remote.rateLimit
+		totalCount: Number(totalCount)
 	};
 }
 

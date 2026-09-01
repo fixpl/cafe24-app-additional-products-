@@ -250,7 +250,6 @@
 			if (operations.length === 0 && issues.length === 0) {
 				issues = [{ row: 2, message: '처리할 데이터 행이 없습니다.' }];
 			}
-			summary = makeSummary(operations, 0, issues.length);
 			banner = issues.length
 				? {
 						kind: 'error',
@@ -258,7 +257,7 @@
 					}
 				: {
 						kind: 'success',
-						message: `${operations.length}개 행을 확인했습니다. CSV 업로드를 누르면 Cafe24에 반영됩니다.`
+						message: `${operations.length}개 행을 확인했습니다. 업로드 시 현재 추가구성상품 설정을 조회해 등록 또는 수정을 자동 선택합니다.`
 					};
 		} catch {
 			issues = [{ row: 1, message: 'CSV 파일을 읽지 못했습니다.' }];
@@ -303,7 +302,7 @@
 		cancelRequested = false;
 		progressCurrent = 0;
 		progressTotal = batchOperations.length;
-		progressLabel = '반영을 준비하고 있습니다.';
+		progressLabel = '현재 설정을 확인하고 반영을 준비하고 있습니다.';
 		banner = { kind: 'info', message: 'Cafe24 추가구성상품 반영을 시작했습니다.' };
 
 		try {
@@ -318,7 +317,7 @@
 						job.results.push({
 							row: operation.row,
 							productNo: operation.productNo,
-							method: operation.method,
+							method: result.method,
 							ok: result.ok,
 							message: result.message
 						});
@@ -345,7 +344,7 @@
 						job.results.push({
 							row: operation.row,
 							productNo: operation.productNo,
-							method: operation.method,
+							method: null,
 							ok: false,
 							message: failure.message
 						});
@@ -382,7 +381,7 @@
 			};
 			jobs = jobs.map((candidate) => (candidate.id === job.id ? job : candidate));
 			await saveUploadJob(job);
-			summary = makeSummary(batchOperations, job.successCount, job.failureCount);
+			summary = makeSummary(batchOperations, job.results);
 			issues = job.results
 				.filter((result) => !result.ok)
 				.map((result) => ({ row: result.row, message: result.message }));
@@ -436,15 +435,14 @@
 
 	function makeSummary(
 		items: AdditionalProductOperation[],
-		success: number,
-		failure: number
+		results: UploadJobRecord['results']
 	): DisplaySummary {
 		return {
 			total: items.length,
-			creates: items.filter((item) => item.method === 'POST').length,
-			updates: items.filter((item) => item.method === 'PUT').length,
-			success,
-			failure,
+			creates: results.filter((result) => result.method === 'POST').length,
+			updates: results.filter((result) => result.method === 'PUT').length,
+			success: results.filter((result) => result.ok).length,
+			failure: results.filter((result) => !result.ok).length,
 			processedAt: new Date().toISOString()
 		};
 	}

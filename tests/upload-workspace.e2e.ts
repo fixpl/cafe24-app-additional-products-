@@ -88,6 +88,22 @@ test('연결 정보는 안전한 메타데이터만 표시하고 만료 전 자�
 	await expect(page.locator('body')).not.toContainText('old-encrypted-envelope');
 	await expect(page.locator('body')).not.toContainText('new-encrypted-envelope');
 
+	await page.locator('input[type="file"]').setInputFiles({
+		name: 'legacy-template.csv',
+		mimeType: 'text/csv',
+		buffer: Buffer.from(
+			'\uFEFF처리방식,기준상품번호,추가구성상품번호1,추가구성상품번호2,추가구성상품번호3,추가구성상품번호4,추가구성상품번호5,추가구성상품번호6,추가구성상품번호7,추가구성상품번호8,추가구성상품번호9,추가구성상품번호10\r\n,2175,2176,2178,2179,2180,,,,,,'
+		)
+	});
+	await expect(
+		page.getByText(
+			'1개 행을 확인했습니다. 업로드 시 현재 추가구성상품 설정을 조회해 등록 또는 수정을 자동 선택합니다.'
+		)
+	).toBeVisible();
+	await expect(
+		page.getByText('처리방식은 등록/POST 또는 수정/PUT만 입력할 수 있습니다.')
+	).toHaveCount(0);
+
 	const savedEnvelope = await page.evaluate(async () => {
 		const database = await new Promise<IDBDatabase>((resolve, reject) => {
 			const request = indexedDB.open('cafe24-additional-products', 2);

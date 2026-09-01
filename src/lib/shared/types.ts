@@ -8,7 +8,6 @@ export type AdditionalProductMethod = 'POST' | 'PUT';
 
 export interface AdditionalProductOperation {
 	row: number;
-	method: AdditionalProductMethod;
 	productNo: number;
 	additionalProducts: number[];
 }
@@ -49,6 +48,7 @@ export interface RateLimitSummary {
 export interface AdditionalProductResult {
 	ok: boolean;
 	status: number;
+	method: AdditionalProductMethod | null;
 	productNo: number;
 	additionalProducts: number[];
 	totalCount: number | null;
@@ -70,7 +70,7 @@ export interface ApiErrorResponse {
 export interface UploadJobResult {
 	row: number;
 	productNo: number;
-	method: AdditionalProductMethod;
+	method: AdditionalProductMethod | null;
 	ok: boolean;
 	message: string;
 }

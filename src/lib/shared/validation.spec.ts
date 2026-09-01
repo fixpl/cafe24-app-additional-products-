@@ -33,13 +33,11 @@ describe('validateAdditionalProductOperation', () => {
 		expect(
 			validateAdditionalProductOperation({
 				row: 2,
-				method: 'POST',
 				productNo: 1001,
 				additionalProducts: [2001, 2002]
 			})
 		).toEqual({
 			row: 2,
-			method: 'POST',
 			productNo: 1001,
 			additionalProducts: [2001, 2002]
 		});
@@ -49,7 +47,6 @@ describe('validateAdditionalProductOperation', () => {
 		expect(() =>
 			validateAdditionalProductOperation({
 				row: 2,
-				method: 'PUT',
 				productNo: 1001,
 				additionalProducts: [2001, 2001]
 			})
@@ -60,7 +57,6 @@ describe('validateAdditionalProductOperation', () => {
 		expect(() =>
 			validateAdditionalProductOperation({
 				row: 2,
-				method: 'POST',
 				productNo: 1001,
 				additionalProducts: [1001]
 			})
@@ -71,7 +67,6 @@ describe('validateAdditionalProductOperation', () => {
 		expect(() =>
 			validateAdditionalProductOperation({
 				row: 2,
-				method: 'POST',
 				productNo: 1001,
 				additionalProducts: Array.from(
 					{ length: MAX_ADDITIONAL_PRODUCTS + 1 },

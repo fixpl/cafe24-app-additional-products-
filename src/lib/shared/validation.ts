@@ -40,9 +40,6 @@ export function validateAdditionalProductOperation(input: unknown): AdditionalPr
 		throw new PublicError(400, 'OPERATION_INVALID', '추가구성상품 요청 형식이 올바르지 않습니다.');
 	}
 	const candidate = input as Record<string, unknown>;
-	if (candidate.method !== 'POST' && candidate.method !== 'PUT') {
-		throw new PublicError(400, 'OPERATION_INVALID', '처리방식은 POST 또는 PUT이어야 합니다.');
-	}
 	const row = Number(candidate.row);
 	if (!Number.isInteger(row) || row < 1 || row > 10_000) {
 		throw new PublicError(400, 'OPERATION_INVALID', 'CSV 행 번호가 올바르지 않습니다.');
@@ -78,5 +75,5 @@ export function validateAdditionalProductOperation(input: unknown): AdditionalPr
 			'기준상품과 같은 상품을 추가구성상품으로 지정할 수 없습니다.'
 		);
 	}
-	return { row, method: candidate.method, productNo, additionalProducts };
+	return { row, productNo, additionalProducts };
 }
