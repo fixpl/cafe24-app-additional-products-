@@ -107,6 +107,7 @@
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let dragActive = $state(false);
 	let expandedResultJobId = $state<string | null>(null);
+	let usageGuideOpen = $state(false);
 
 	const runningJobs = $derived(jobs.filter((job) => job.status === 'running'));
 	const finishedJobs = $derived(jobs.filter((job) => job.status !== 'running'));
@@ -118,7 +119,7 @@
 				: summary?.failure
 					? '실패 결과 확인 필요'
 					: selectedFileName
-						? 'CSV 확인 후 Cafe24에 적용'
+						? '파일 확인 후 Cafe24에 적용'
 						: '파일 선택 후 Cafe24에 적용'
 	);
 
@@ -246,7 +247,7 @@
 					class="hidden-input"
 					type="file"
 					bind:this={fileInput}
-					accept=".csv,text/csv"
+					accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 					onchange={handleFileChange}
 					disabled={!auth}
 				/>
@@ -266,7 +267,7 @@
 						<Icon icon={uploadIcon} width="88" height="88" />
 					</div>
 					<p class="dropzone-copy">
-						CSV 파일 드래그 또는 <strong>선택</strong>
+						CSV 또는 XLSX 파일 드래그 또는 <strong>선택</strong>
 					</p>
 					<p class="dropzone-file">
 						{selectedFileName ? `선택 파일: ${selectedFileName}` : '선택된 파일이 없습니다.'}
@@ -282,11 +283,11 @@
 							{#if phase === 'running'}
 								Cafe24에 적용하고 있습니다. 완료 후 행별 결과를 확인할 수 있습니다.
 							{:else if summary?.failure}
-								실패한 행의 결과를 확인하고 CSV 또는 상품 상태를 수정한 뒤 다시 적용하세요.
+								실패한 행의 결과를 확인하고 파일 또는 상품 상태를 수정한 뒤 다시 적용하세요.
 							{:else if canApply}
-								CSV 확인을 마쳤습니다. 아래 버튼을 누르면 Cafe24에 실제로 등록 또는 수정됩니다.
+								파일 확인을 마쳤습니다. 아래 버튼을 누르면 Cafe24에 실제로 등록 또는 수정됩니다.
 							{:else}
-								CSV 오류를 수정한 뒤 Cafe24에 적용할 수 있습니다.
+								파일 오류를 수정한 뒤 Cafe24에 적용할 수 있습니다.
 							{/if}
 						</p>
 					{/if}
@@ -303,12 +304,46 @@
 
 			<div class="status-panel">
 				<div class="panel-top">
-					<button class="template-button" type="button" onclick={handlers.onDownload}>
-						<Icon icon={downloadIcon} width="18" height="18" />
-						<span>추가구성상품 설정용 CSV 양식 다운로드</span>
-					</button>
+					<div class="panel-actions">
+						<button class="template-button" type="button" onclick={handlers.onDownload}>
+							<Icon icon={downloadIcon} width="18" height="18" />
+							<span>추가구성상품 설정용 XLSX 양식 다운로드</span>
+						</button>
+						<button
+							class="guide-button"
+							type="button"
+							onclick={() => (usageGuideOpen = !usageGuideOpen)}
+							aria-expanded={usageGuideOpen}
+							aria-controls="upload-usage-guide"
+							aria-label={usageGuideOpen ? '사용 방법 닫기' : '사용 방법 열기'}
+						>
+							<span aria-hidden="true">?</span>
+							사용 방법
+						</button>
+					</div>
 					<p>전용 양식을 내려받아 정보 입력 후 업로드합니다.</p>
 				</div>
+
+				{#if usageGuideOpen}
+					<section class="usage-guide" id="upload-usage-guide" aria-label="업로드 사용 방법">
+						<h2>업로드 사용 방법</h2>
+						<ol>
+							<li>
+								<strong>한 번에 최대 500행</strong>까지 적용할 수 있습니다. 501행 이상인 파일은
+								파일을 나누어 업로드하세요.
+							</li>
+							<li>
+								기준상품과 추가구성상품에는 <strong>상품번호</strong>(예: 2185) 또는
+								<strong>상품코드</strong>(예: P0000DGB)를 섞어 입력할 수 있습니다.
+							</li>
+							<li>
+								상품코드는 적용 전에 Cafe24에서 상품번호로 확인합니다. 찾지 못하거나 중복으로
+								확인되면 해당 행은 적용하지 않습니다.
+							</li>
+							<li>기준상품 1개당 추가구성상품은 최대 10개까지 입력할 수 있습니다.</li>
+						</ol>
+					</section>
+				{/if}
 
 				{#if progress}
 					<div class="progress-card" aria-live="polite">
@@ -658,6 +693,7 @@
 	.primary-button:focus-visible,
 	.secondary-button:focus-visible,
 	.template-button:focus-visible,
+	.guide-button:focus-visible,
 	.dropzone-surface:focus-visible {
 		box-shadow: 0 0 0 3px rgba(113, 151, 247, 0.2);
 		border-color: #7a97e9;
@@ -866,6 +902,71 @@
 		flex-direction: column;
 		gap: 10px;
 		align-items: flex-start;
+	}
+
+	.panel-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		align-items: center;
+	}
+
+	.guide-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 7px;
+		min-height: 42px;
+		border: 1px solid #d7dce5;
+		padding: 10px 14px;
+		color: #556077;
+		background: #fff;
+		border-radius: 999px;
+		font-size: 13px;
+		font-weight: 700;
+	}
+
+	.guide-button span {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 17px;
+		height: 17px;
+		border: 1px solid currentColor;
+		border-radius: 999px;
+		font-size: 11px;
+		line-height: 1;
+	}
+
+	.usage-guide {
+		padding: 16px 18px;
+		border: 1px solid #d9e3f7;
+		background: #f7faff;
+		border-radius: 8px;
+	}
+
+	.usage-guide h2 {
+		font-size: 14px;
+		font-weight: 700;
+		color: #354968;
+	}
+
+	.usage-guide ol {
+		display: flex;
+		flex-direction: column;
+		gap: 7px;
+		padding-left: 19px;
+		margin: 11px 0 0;
+	}
+
+	.usage-guide li {
+		font-size: 13px;
+		line-height: 1.6;
+		color: #56647b;
+	}
+
+	.usage-guide strong {
+		color: #36547f;
 	}
 
 	.panel-top p {

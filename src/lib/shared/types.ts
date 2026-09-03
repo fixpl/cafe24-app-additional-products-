@@ -6,10 +6,26 @@ export const CAFE24_REQUIRED_SCOPES = [
 ] as const;
 export type AdditionalProductMethod = 'POST' | 'PUT';
 
+/** CSV/XLSX에 입력된 상품번호 또는 Cafe24 상품코드입니다. */
+export type ProductIdentifier = number | string;
+
+/** Cafe24 상품번호로 변환하기 전, 파일에서 읽은 추가구성상품 행입니다. */
+export interface AdditionalProductInputOperation {
+	row: number;
+	productNo: ProductIdentifier;
+	additionalProducts: ProductIdentifier[];
+}
+
 export interface AdditionalProductOperation {
 	row: number;
 	productNo: number;
 	additionalProducts: number[];
+}
+
+export interface ProductCodeResolution {
+	productCode: string;
+	productNo: number | null;
+	message: string | null;
 }
 
 export interface CsvIssue {
@@ -59,6 +75,12 @@ export interface AdditionalProductResult {
 export interface AdditionalProductApiResponse {
 	ok: true;
 	result: AdditionalProductResult;
+	credential: TokenEnvelopeRecord | null;
+}
+
+export interface ProductCodeResolveApiResponse {
+	ok: true;
+	resolutions: ProductCodeResolution[];
 	credential: TokenEnvelopeRecord | null;
 }
 

@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
+import * as XLSX from 'xlsx';
 
 const storedCredential = {
 	envelope: 'old-encrypted-envelope',
@@ -75,6 +76,33 @@ test('연결 정보는 안전한 메타데이터만 표시하고 결과를 조�
 		refreshRequests.push(route.request().postData() ?? '');
 		return route.fulfill({ json: authPayload(refreshedCredential, refreshedCredential) });
 	});
+	const productCodeRequests: string[] = [];
+	const productNumbersByCode: Record<string, number> = {
+		P0000DGB: 2175,
+		P0000DGC: 2176,
+		P0000DGD: 2178,
+		P0000DGE: 2179,
+		P0000DGF: 2180
+	};
+	await page.route('**/api/product-codes', (route) => {
+		const postData = route.request().postData() ?? '';
+		productCodeRequests.push(postData);
+		const { productCodes } = JSON.parse(postData) as { productCodes: string[] };
+		return route.fulfill({
+			json: {
+				ok: true,
+				resolutions: productCodes.map((productCode) => ({
+					productCode,
+					productNo: productNumbersByCode[productCode] ?? null,
+					message:
+						productNumbersByCode[productCode] === undefined
+							? 'Cafe24에서 해당 상품코드를 찾지 못했습니다.'
+							: null
+				})),
+				credential: null
+			}
+		});
+	});
 	let additionalProductCalls = 0;
 	const operationResults = [
 		{
@@ -140,19 +168,67 @@ test('연결 정보는 안전한 메타데이터만 표시하고 결과를 조�
 	await expect(page.locator('body')).not.toContainText('old-encrypted-envelope');
 	await expect(page.locator('body')).not.toContainText('new-encrypted-envelope');
 	await expect(page.getByRole('button', { name: '파일 선택 후 Cafe24에 적용' })).toBeDisabled();
+	await page.getByRole('button', { name: '사용 방법 열기' }).click();
+	const usageGuide = page.getByRole('region', { name: '업로드 사용 방법' });
+	await expect(usageGuide).toContainText('한 번에 최대 500행');
+	await expect(usageGuide).toContainText('상품번호');
+	await expect(usageGuide).toContainText('상품코드');
+	await page.screenshot({ path: testInfo.outputPath('upload-usage-guide.png'), fullPage: true });
+	await page.getByRole('button', { name: '사용 방법 닫기' }).click();
+	const templateDownloadPromise = page.waitForEvent('download');
+	await page.getByRole('button', { name: '추가구성상품 설정용 XLSX 양식 다운로드' }).click();
+	const templateDownload = await templateDownloadPromise;
+	expect(templateDownload.suggestedFilename()).toBe('cafe24-additional-products-template.xlsx');
+	const templatePath = await templateDownload.path();
+	expect(templatePath).not.toBeNull();
+	const templateWorkbook = XLSX.read(await readFile(templatePath!), { type: 'buffer' });
+	expect(templateWorkbook.SheetNames).toEqual(['추가구성상품']);
+	expect(
+		XLSX.utils.sheet_to_json(templateWorkbook.Sheets['추가구성상품'], { header: 1 })[0]
+	).toEqual([
+		'기준상품번호',
+		...Array.from({ length: 10 }, (_, index) => `추가구성상품번호${index + 1}`)
+	]);
 
 	await page.locator('input[type="file"]').setInputFiles({
 		name: 'legacy-template.csv',
 		mimeType: 'text/csv',
 		buffer: Buffer.from(
-			'\uFEFF처리방식,기준상품번호,추가구성상품번호1,추가구성상품번호2,추가구성상품번호3,추가구성상품번호4,추가구성상품번호5,추가구성상품번호6,추가구성상품번호7,추가구성상품번호8,추가구성상품번호9,추가구성상품번호10\r\n,2175,2176,2178,2179,2180,,,,,,\r\n,3001,3002'
+			'\uFEFF처리방식,기준상품번호,추가구성상품번호1,추가구성상품번호2,추가구성상품번호3,추가구성상품번호4,추가구성상품번호5,추가구성상품번호6,추가구성상품번호7,추가구성상품번호8,추가구성상품번호9,추가구성상품번호10\r\n,P0000DGB,P0000DGC,P0000DGD,P0000DGE,P0000DGF,,,,,,\r\n,3001,3002'
 		)
 	});
 	await expect(
 		page.getByText(
-			'2개 행을 확인했습니다. 업로드 시 현재 추가구성상품 설정을 조회해 등록 또는 수정을 자동 선택합니다.'
+			'2개 행을 확인했습니다. 적용 전에 상품코드를 상품번호로 확인하고, 현재 추가구성상품 설정에 따라 등록 또는 수정을 자동 선택합니다.'
 		)
 	).toBeVisible();
+	const uploadWorkbook = XLSX.utils.book_new();
+	XLSX.utils.book_append_sheet(
+		uploadWorkbook,
+		XLSX.utils.aoa_to_sheet([
+			['기준상품번호', ...Array.from({ length: 10 }, (_, index) => `추가구성상품번호${index + 1}`)],
+			[2175, 2176]
+		]),
+		'추가구성상품'
+	);
+	await page.locator('input[type="file"]').setInputFiles({
+		name: 'additional-products.xlsx',
+		mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+		buffer: Buffer.from(XLSX.write(uploadWorkbook, { bookType: 'xlsx', type: 'buffer' }))
+	});
+	await expect(page.getByText('선택 파일: additional-products.xlsx')).toBeVisible();
+	await expect(
+		page.getByText(
+			'1개 행을 확인했습니다. 적용 전에 상품코드를 상품번호로 확인하고, 현재 추가구성상품 설정에 따라 등록 또는 수정을 자동 선택합니다.'
+		)
+	).toBeVisible();
+	await page.locator('input[type="file"]').setInputFiles({
+		name: 'legacy-template.csv',
+		mimeType: 'text/csv',
+		buffer: Buffer.from(
+			'\uFEFF처리방식,기준상품번호,추가구성상품번호1,추가구성상품번호2,추가구성상품번호3,추가구성상품번호4,추가구성상품번호5,추가구성상품번호6,추가구성상품번호7,추가구성상품번호8,추가구성상품번호9,추가구성상품번호10\r\n,P0000DGB,P0000DGC,P0000DGD,P0000DGE,P0000DGF,,,,,,\r\n,3001,3002'
+		)
+	});
 	await expect(
 		page.getByText('처리방식은 등록/POST 또는 수정/PUT만 입력할 수 있습니다.')
 	).toHaveCount(0);
@@ -161,9 +237,17 @@ test('연결 정보는 안전한 메타데이터만 표시하고 결과를 조�
 	await applyButton.click();
 	await expect(page.getByText('반영을 마쳤지만 1개 행이 실패했습니다.')).toBeVisible();
 	expect(additionalProductCalls).toBe(3);
+	expect(productCodeRequests).toHaveLength(1);
+	expect(JSON.parse(productCodeRequests[0]).productCodes).toEqual([
+		'P0000DGB',
+		'P0000DGC',
+		'P0000DGD',
+		'P0000DGE',
+		'P0000DGF'
+	]);
 	await expect(page.getByRole('button', { name: '실패 결과 확인 필요' })).toBeDisabled();
 	await expect(
-		page.getByText('실패한 행의 결과를 확인하고 CSV 또는 상품 상태를 수정한 뒤 다시 적용하세요.')
+		page.getByText('실패한 행의 결과를 확인하고 파일 또는 상품 상태를 수정한 뒤 다시 적용하세요.')
 	).toBeVisible();
 	await page.getByRole('button', { name: '결과 보기' }).click();
 	const resultTable = page.locator('.result-table');
@@ -255,4 +339,20 @@ test('연결 정보는 안전한 메타데이터만 표시하고 결과를 조�
 		path: testInfo.outputPath('completed-history-scroll.png'),
 		fullPage: true
 	});
+	const headers = [
+		'기준상품번호',
+		...Array.from({ length: 10 }, (_, index) => `추가구성상품번호${index + 1}`)
+	];
+	const tooManyRows = Array.from({ length: 501 }, (_, index) => `${index + 1},${index + 1001}`);
+	await page.locator('input[type="file"]').setInputFiles({
+		name: 'over-500-rows.csv',
+		mimeType: 'text/csv',
+		buffer: Buffer.from(`${headers.join(',')}\n${tooManyRows.join('\n')}`)
+	});
+	await expect(
+		page.getByText(
+			'한 번에 최대 500행만 적용할 수 있습니다. 501행 이상인 파일은 나누어 다시 업로드해주세요.'
+		)
+	).toBeVisible();
+	await expect(page.getByText('데이터 행은 최대 500개까지 처리할 수 있습니다.')).toBeVisible();
 });

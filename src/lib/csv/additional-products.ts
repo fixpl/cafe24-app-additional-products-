@@ -1,7 +1,12 @@
-import type { AdditionalProductOperation, CsvIssue } from '$lib/shared/types';
+import type {
+	AdditionalProductInputOperation,
+	CsvIssue,
+	ProductIdentifier
+} from '$lib/shared/types';
 
 export type {
 	AdditionalProductMethod,
+	AdditionalProductInputOperation,
 	AdditionalProductOperation,
 	CsvIssue
 } from '$lib/shared/types';
@@ -21,6 +26,7 @@ const EXPECTED_HEADERS = [PRODUCT_NO_HEADER, ...ADDITIONAL_PRODUCT_HEADERS];
 const RECOGNIZED_HEADER_SET = new Set([...EXPECTED_HEADERS, LEGACY_METHOD_HEADER]);
 const MAX_DATA_ROWS = 500;
 const MAX_PRODUCT_NO = 2_147_483_647;
+const PRODUCT_CODE_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,99}$/;
 
 function parseCsv(text: string): { rows: ParsedCsvRow[]; issues: CsvIssue[] } {
 	const source = text.startsWith('\uFEFF') ? text.slice(1) : text;
@@ -147,14 +153,17 @@ function validateHeaders(headerRow: ParsedCsvRow): CsvIssue[] {
 	return issues;
 }
 
-function parseProductNumber(value: string): number | undefined {
+function parseProductIdentifier(value: string): ProductIdentifier | undefined {
 	const normalized = value.trim();
-	if (!/^\d+$/.test(normalized)) {
-		return undefined;
+	if (/^\d+$/.test(normalized)) {
+		const parsed = Number(normalized);
+		return Number.isInteger(parsed) && parsed > 0 && parsed <= MAX_PRODUCT_NO ? parsed : undefined;
 	}
+	return PRODUCT_CODE_PATTERN.test(normalized) ? normalized : undefined;
+}
 
-	const parsed = Number(normalized);
-	return Number.isInteger(parsed) && parsed > 0 && parsed <= MAX_PRODUCT_NO ? parsed : undefined;
+function identifierKey(value: ProductIdentifier) {
+	return typeof value === 'number' ? `number:${value}` : `code:${value}`;
 }
 
 function indexHeaders(headers: string[]): Map<string, number> {
@@ -162,12 +171,12 @@ function indexHeaders(headers: string[]): Map<string, number> {
 }
 
 export function parseAdditionalProductsCsv(text: string): {
-	operations: AdditionalProductOperation[];
+	operations: AdditionalProductInputOperation[];
 	issues: CsvIssue[];
 } {
 	const parsed = parseCsv(text);
 	const issues = [...parsed.issues];
-	const operations: AdditionalProductOperation[] = [];
+	const operations: AdditionalProductInputOperation[] = [];
 	const headerIndex = parsed.rows.findIndex((row) => !isBlankRow(row.cells));
 
 	if (headerIndex === -1) {
@@ -200,7 +209,7 @@ export function parseAdditionalProductsCsv(text: string): {
 		});
 	}
 
-	const firstRowByProductNo = new Map<number, number>();
+	const firstRowByProductIdentifier = new Map<string, number>();
 
 	for (const dataRow of rowsWithinLimit) {
 		if (syntaxIssueRows.has(dataRow.row)) {
@@ -208,15 +217,16 @@ export function parseAdditionalProductsCsv(text: string): {
 		}
 
 		const rowIssues: CsvIssue[] = [];
-		const productNo = parseProductNumber(dataRow.cells[productNoIndex] ?? '');
+		const productNo = parseProductIdentifier(dataRow.cells[productNoIndex] ?? '');
 		if (productNo === undefined) {
 			rowIssues.push({
 				row: dataRow.row,
 				column: PRODUCT_NO_HEADER,
-				message: `기준상품번호는 1 이상 ${MAX_PRODUCT_NO} 이하의 정수여야 합니다.`
+				message: `기준상품번호는 1 이상 ${MAX_PRODUCT_NO} 이하의 정수 또는 상품코드여야 합니다.`
 			});
 		} else {
-			const firstRow = firstRowByProductNo.get(productNo);
+			const productKey = identifierKey(productNo);
+			const firstRow = firstRowByProductIdentifier.get(productKey);
 			if (firstRow !== undefined) {
 				rowIssues.push({
 					row: dataRow.row,
@@ -224,11 +234,11 @@ export function parseAdditionalProductsCsv(text: string): {
 					message: `기준상품번호 ${productNo}가 파일에서 중복되었습니다 (첫 행: ${firstRow}).`
 				});
 			} else {
-				firstRowByProductNo.set(productNo, dataRow.row);
+				firstRowByProductIdentifier.set(productKey, dataRow.row);
 			}
 		}
 
-		const additionalProducts: number[] = [];
+		const additionalProducts: ProductIdentifier[] = [];
 		let enteredAdditionalProductCount = 0;
 
 		for (let index = 0; index < additionalProductIndexes.length; index += 1) {
@@ -239,12 +249,12 @@ export function parseAdditionalProductsCsv(text: string): {
 			}
 
 			enteredAdditionalProductCount += 1;
-			const additionalProductNo = parseProductNumber(rawValue);
+			const additionalProductNo = parseProductIdentifier(rawValue);
 			if (additionalProductNo === undefined) {
 				rowIssues.push({
 					row: dataRow.row,
 					column,
-					message: `${column}는 1 이상 ${MAX_PRODUCT_NO} 이하의 정수여야 합니다.`
+					message: `${column}는 1 이상 ${MAX_PRODUCT_NO} 이하의 정수 또는 상품코드여야 합니다.`
 				});
 				continue;
 			}
@@ -272,19 +282,20 @@ export function parseAdditionalProductsCsv(text: string): {
 			});
 		}
 
-		const seenAdditionalProducts = new Set<number>();
+		const seenAdditionalProducts = new Set<string>();
 		for (const additionalProductNo of additionalProducts) {
-			if (seenAdditionalProducts.has(additionalProductNo)) {
+			const additionalProductKey = identifierKey(additionalProductNo);
+			if (seenAdditionalProducts.has(additionalProductKey)) {
 				rowIssues.push({
 					row: dataRow.row,
 					message: `추가구성상품번호가 중복되었습니다: ${additionalProductNo}`
 				});
 			} else {
-				seenAdditionalProducts.add(additionalProductNo);
+				seenAdditionalProducts.add(additionalProductKey);
 			}
 		}
 
-		if (productNo !== undefined && seenAdditionalProducts.has(productNo)) {
+		if (productNo !== undefined && seenAdditionalProducts.has(identifierKey(productNo))) {
 			rowIssues.push({
 				row: dataRow.row,
 				message: '기준상품번호와 동일한 추가구성상품번호는 사용할 수 없습니다.'

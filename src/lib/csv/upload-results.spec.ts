@@ -47,7 +47,8 @@ describe('createUploadResultsCsv', () => {
 });
 
 describe('createUploadResultsFileName', () => {
-	it('원본 CSV 이름에서 결과 파일 이름을 만든다', () => {
+	it('원본 CSV 또는 XLSX 이름에서 결과 파일 이름을 만든다', () => {
 		expect(createUploadResultsFileName('추가구성상품.csv')).toBe('추가구성상품-results.csv');
+		expect(createUploadResultsFileName('추가구성상품.xlsx')).toBe('추가구성상품-results.csv');
 	});
 });

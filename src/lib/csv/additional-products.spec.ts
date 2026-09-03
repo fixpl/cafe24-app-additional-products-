@@ -38,6 +38,15 @@ describe('parseAdditionalProductsCsv', () => {
 		]);
 	});
 
+	it('숫자가 아닌 상품코드는 Cafe24 확인 전까지 문자열로 유지한다', () => {
+		const result = parseAdditionalProductsCsv(`${HEADER}\nP0000DGB,2182,P0000DFY`);
+
+		expect(result.issues).toEqual([]);
+		expect(result.operations).toEqual([
+			{ row: 2, productNo: 'P0000DGB', additionalProducts: [2182, 'P0000DFY'] }
+		]);
+	});
+
 	it('기존 처리방식 열은 값과 무관하게 호환용으로 무시한다', () => {
 		const result = parseAdditionalProductsCsv(
 			`${LEGACY_HEADER}\n,100,200\n등록,101,201\n수정,102,202`

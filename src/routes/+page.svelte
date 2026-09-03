@@ -11,14 +11,19 @@
 		saveUploadJob,
 		withCredentialLock
 	} from '$lib/client/indexed-db';
-	import { createTemplateCsv, parseAdditionalProductsCsv } from '$lib/csv/additional-products';
+	import { parseAdditionalProductsCsv } from '$lib/csv/additional-products';
+	import { readAdditionalProductsFile } from '$lib/csv/additional-products-file';
 	import { createUploadResultsCsv, createUploadResultsFileName } from '$lib/csv/upload-results';
 	import type {
 		AdditionalProductApiResponse,
+		AdditionalProductInputOperation,
 		AdditionalProductOperation,
 		ApiErrorResponse,
 		AuthStatus,
 		CsvIssue,
+		ProductCodeResolveApiResponse,
+		ProductCodeResolution,
+		ProductIdentifier,
 		TokenEnvelopeRecord,
 		UploadJobRecord
 	} from '$lib/shared/types';
@@ -52,6 +57,7 @@
 	const CAFE24_OPERATION_INTERVAL_MS = 1_100;
 	const CAFE24_RATE_LIMIT_RETRY_FALLBACK_MS = 1_000;
 	const CAFE24_RATE_LIMIT_RETRY_GUARD_MS = 250;
+	const PRODUCT_CODE_LOOKUP_BATCH_SIZE = 100;
 
 	class ApiFailure extends Error {
 		readonly reauthorize: boolean;
@@ -69,12 +75,13 @@
 	let auth = $state<AuthStatus | null>(null);
 	let credential = $state<TokenEnvelopeRecord | null>(null);
 	let selectedFile = $state<File | null>(null);
-	let operations = $state<AdditionalProductOperation[]>([]);
+	let operations = $state<AdditionalProductInputOperation[]>([]);
 	let issues = $state<CsvIssue[]>([]);
 	let summary = $state<DisplaySummary | null>(null);
 	let jobs = $state<DisplayJob[]>([]);
 	let banner = $state<Banner | null>(null);
 	let running = $state(false);
+	let resolvingProductCodes = $state(false);
 	let progressCurrent = $state(0);
 	let progressTotal = $state(0);
 	let progressLabel = $state('');
@@ -88,7 +95,7 @@
 			? 'signed-out'
 			: loading
 				? 'loading'
-				: running
+				: running || resolvingProductCodes
 					? 'running'
 					: auth
 						? 'ready'
@@ -96,11 +103,19 @@
 	);
 	const canApply = $derived(
 		Boolean(
-			auth && credential && selectedFile && operations.length > 0 && issues.length === 0 && !running
+			auth &&
+			credential &&
+			selectedFile &&
+			operations.length > 0 &&
+			issues.length === 0 &&
+			!running &&
+			!resolvingProductCodes
 		)
 	);
 	const progress = $derived(
-		running ? { current: progressCurrent, total: progressTotal, label: progressLabel } : null
+		running || resolvingProductCodes
+			? { current: progressCurrent, total: progressTotal, label: progressLabel }
+			: null
 	);
 
 	onMount(() => {
@@ -238,17 +253,19 @@
 		issues = [];
 		summary = null;
 		banner = null;
-		if (!file.name.toLowerCase().endsWith('.csv')) {
-			issues = [{ row: 1, message: 'UTF-8 CSV 파일만 업로드할 수 있습니다.' }];
+		const lowerFileName = file.name.toLowerCase();
+		const isCsv = lowerFileName.endsWith('.csv');
+		if (!isCsv && !lowerFileName.endsWith('.xlsx')) {
+			issues = [{ row: 1, message: 'CSV 또는 XLSX 파일만 업로드할 수 있습니다.' }];
 			return;
 		}
 		if (file.size > 1024 * 1024) {
-			issues = [{ row: 1, message: 'CSV 파일은 1MB 이하여야 합니다.' }];
+			issues = [{ row: 1, message: 'CSV 또는 XLSX 파일은 1MB 이하여야 합니다.' }];
 			return;
 		}
 		try {
-			const text = await file.text();
-			if (text.includes('\uFFFD') || text.includes('\0')) {
+			const text = await readAdditionalProductsFile(file);
+			if (isCsv && (text.includes('\uFFFD') || text.includes('\0'))) {
 				issues = [{ row: 1, message: 'CSV 파일을 UTF-8 형식으로 다시 저장해주세요.' }];
 				return;
 			}
@@ -258,28 +275,35 @@
 			if (operations.length === 0 && issues.length === 0) {
 				issues = [{ row: 2, message: '처리할 데이터 행이 없습니다.' }];
 			}
+			const exceedsDataRowLimit = parsed.issues.some((issue) =>
+				issue.message.includes('데이터 행은 최대 500개')
+			);
 			banner = issues.length
 				? {
 						kind: 'error',
-						message: `CSV에서 ${issues.length}개의 오류를 확인했습니다. 오류를 모두 수정한 뒤 다시 선택해주세요.`
+						message: exceedsDataRowLimit
+							? '한 번에 최대 500행만 적용할 수 있습니다. 501행 이상인 파일은 나누어 다시 업로드해주세요.'
+							: `파일에서 ${issues.length}개의 오류를 확인했습니다. 오류를 모두 수정한 뒤 다시 선택해주세요.`
 					}
 				: {
 						kind: 'success',
-						message: `${operations.length}개 행을 확인했습니다. 업로드 시 현재 추가구성상품 설정을 조회해 등록 또는 수정을 자동 선택합니다.`
+						message: `${operations.length}개 행을 확인했습니다. 적용 전에 상품코드를 상품번호로 확인하고, 현재 추가구성상품 설정에 따라 등록 또는 수정을 자동 선택합니다.`
 					};
-		} catch {
-			issues = [{ row: 1, message: 'CSV 파일을 읽지 못했습니다.' }];
+		} catch (error) {
+			issues = [
+				{
+					row: 1,
+					message: error instanceof Error ? error.message : 'CSV 또는 XLSX 파일을 읽지 못했습니다.'
+				}
+			];
 		}
 	}
 
 	function downloadTemplate() {
-		const blob = new Blob([createTemplateCsv()], { type: 'text/csv;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
 		const anchor = document.createElement('a');
-		anchor.href = url;
-		anchor.download = 'cafe24-additional-products-template.csv';
+		anchor.href = '/cafe24-additional-products-template.xlsx';
+		anchor.download = 'cafe24-additional-products-template.xlsx';
 		anchor.click();
-		URL.revokeObjectURL(url);
 	}
 
 	function downloadResults(jobId: string) {
@@ -330,8 +354,203 @@
 
 	async function applyUpload() {
 		if (!canApply || !selectedFile || !credential) return;
-		const batchOperations = [...operations];
+		const inputOperations = [...operations];
 		const fileName = selectedFile.name;
+		const controller = new AbortController();
+		cancelRequested = false;
+		resolvingProductCodes = true;
+		progressCurrent = 0;
+		progressTotal = inputOperations.length;
+		progressLabel = '상품코드를 Cafe24 상품번호로 확인하고 있습니다.';
+		banner = { kind: 'info', message: '상품번호와 상품코드를 확인하고 있습니다.' };
+		activeController = controller;
+
+		try {
+			const resolved = await withCredentialLock(() =>
+				resolveProductCodeOperations(inputOperations, controller.signal)
+			);
+			if (cancelRequested) return;
+			if (resolved.issues.length > 0) {
+				issues = resolved.issues;
+				banner = {
+					kind: 'error',
+					message: `상품코드 확인에서 ${resolved.issues.length}개의 오류를 확인했습니다. 수정 후 다시 적용해주세요.`
+				};
+				return;
+			}
+			await runUpload(resolved.operations, fileName);
+		} catch (error) {
+			if (isAbort(error)) return;
+			const failure =
+				error instanceof ApiFailure
+					? error
+					: new ApiFailure('상품코드를 Cafe24 상품번호로 확인하지 못했습니다.');
+			if (failure.reauthorize) {
+				await clearTokenCredential();
+				credential = null;
+				auth = null;
+				clearScheduledCredentialRefresh();
+			}
+			banner = { kind: 'error', message: failure.message };
+		} finally {
+			resolvingProductCodes = false;
+			if (activeController === controller) activeController = null;
+			cancelRequested = false;
+		}
+	}
+
+	async function resolveProductCodeOperations(
+		inputOperations: AdditionalProductInputOperation[],
+		signal: AbortSignal
+	): Promise<{ operations: AdditionalProductOperation[]; issues: CsvIssue[] }> {
+		const productCodes = uniqueProductCodes(inputOperations);
+		const resolutions =
+			productCodes.length === 0 ? [] : await requestProductCodeResolutions(productCodes, signal);
+		const productNoByCode = Object.fromEntries(
+			resolutions.map((resolution) => [resolution.productCode, resolution] as const)
+		) as Record<string, ProductCodeResolution>;
+		const resolvedOperations: AdditionalProductOperation[] = [];
+		const issues: CsvIssue[] = [];
+		const firstRowByProductNo: Record<number, number> = {};
+
+		for (const inputOperation of inputOperations) {
+			const rowIssues: CsvIssue[] = [];
+			const productNo = resolveProductIdentifier(
+				inputOperation.productNo,
+				inputOperation.row,
+				'기준상품번호',
+				productNoByCode,
+				rowIssues
+			);
+			const additionalProducts = inputOperation.additionalProducts.flatMap((identifier, index) => {
+				const productNo = resolveProductIdentifier(
+					identifier,
+					inputOperation.row,
+					`추가구성상품번호${index + 1}`,
+					productNoByCode,
+					rowIssues
+				);
+				return productNo === null ? [] : [productNo];
+			});
+
+			if (productNo !== null) {
+				const firstRow = firstRowByProductNo[productNo];
+				if (firstRow !== undefined) {
+					rowIssues.push({
+						row: inputOperation.row,
+						column: '기준상품번호',
+						message: `기준상품번호 ${productNo}가 파일에서 중복되었습니다 (첫 행: ${firstRow}).`
+					});
+				} else {
+					firstRowByProductNo[productNo] = inputOperation.row;
+				}
+			}
+			if (
+				additionalProducts.some(
+					(productNo, index) => additionalProducts.indexOf(productNo) !== index
+				)
+			) {
+				rowIssues.push({
+					row: inputOperation.row,
+					message: '상품코드 변환 후 추가구성상품번호가 중복되었습니다.'
+				});
+			}
+			if (productNo !== null && additionalProducts.includes(productNo)) {
+				rowIssues.push({
+					row: inputOperation.row,
+					message: '상품코드 변환 후 기준상품번호와 동일한 추가구성상품번호가 되었습니다.'
+				});
+			}
+			issues.push(...rowIssues);
+			if (rowIssues.length === 0 && productNo !== null) {
+				resolvedOperations.push({ row: inputOperation.row, productNo, additionalProducts });
+			}
+		}
+
+		return { operations: resolvedOperations, issues };
+	}
+
+	function uniqueProductCodes(inputOperations: AdditionalProductInputOperation[]) {
+		const productCodes: string[] = [];
+		for (const operation of inputOperations) {
+			for (const identifier of [operation.productNo, ...operation.additionalProducts]) {
+				if (typeof identifier === 'string' && !productCodes.includes(identifier)) {
+					productCodes.push(identifier);
+				}
+			}
+		}
+		return productCodes;
+	}
+
+	async function requestProductCodeResolutions(productCodes: string[], signal: AbortSignal) {
+		if (!credential) throw new ApiFailure('Cafe24 로그인이 필요합니다.', true);
+		const resolutions: ProductCodeResolution[] = [];
+		progressTotal = productCodes.length;
+		for (let start = 0; start < productCodes.length; start += PRODUCT_CODE_LOOKUP_BATCH_SIZE) {
+			const batch = productCodes.slice(start, start + PRODUCT_CODE_LOOKUP_BATCH_SIZE);
+			progressCurrent = start;
+			progressLabel = `상품코드 ${start + 1}~${start + batch.length}개를 확인하고 있습니다.`;
+			const response = await fetch('/api/product-codes', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', accept: 'application/json' },
+				body: JSON.stringify({ envelope: credential.envelope, productCodes: batch }),
+				signal
+			});
+			let payload: ProductCodeResolveApiResponse | ApiErrorResponse;
+			try {
+				payload = (await response.json()) as ProductCodeResolveApiResponse | ApiErrorResponse;
+			} catch {
+				throw new ApiFailure('상품코드 확인 결과를 읽지 못했습니다.', false, response.status);
+			}
+			if (!response.ok || !payload.ok) {
+				throw new ApiFailure(
+					payload.ok ? '상품코드 확인 요청이 실패했습니다.' : payload.error.message,
+					payload.ok ? false : payload.error.reauthorize,
+					response.status
+				);
+			}
+			if (payload.credential) await applyCredential(payload.credential);
+			resolutions.push(...payload.resolutions);
+			progressCurrent = start + batch.length;
+		}
+		return resolutions;
+	}
+
+	function resolveProductIdentifier(
+		identifier: ProductIdentifier,
+		row: number,
+		column: string,
+		productNoByCode: Record<string, ProductCodeResolution>,
+		issues: CsvIssue[]
+	): number | null {
+		if (typeof identifier === 'number') return identifier;
+		const resolution = productNoByCode[identifier];
+		if (resolution?.productNo !== null && resolution?.productNo !== undefined) {
+			return resolution.productNo;
+		}
+		issues.push({
+			row,
+			column,
+			message: `상품코드 ${identifier}: ${resolution?.message ?? 'Cafe24에서 확인하지 못했습니다.'}`
+		});
+		return null;
+	}
+
+	async function applyCredential(nextCredential: TokenEnvelopeRecord) {
+		credential = nextCredential;
+		auth = {
+			mallId: nextCredential.mallId,
+			shopNo: nextCredential.shopNo,
+			userId: nextCredential.userId,
+			accessTokenExpiresAt: nextCredential.accessTokenExpiresAt,
+			refreshTokenExpiresAt: nextCredential.refreshTokenExpiresAt,
+			scopes: [...nextCredential.scopes]
+		};
+		await saveTokenCredential(nextCredential);
+		scheduleCredentialRefresh();
+	}
+
+	async function runUpload(batchOperations: AdditionalProductOperation[], fileName: string) {
 		const jobId = crypto.randomUUID();
 		const startedAt = new Date().toISOString();
 		let job: DisplayJob = {
@@ -483,17 +702,7 @@
 			);
 		}
 		if (payload.credential) {
-			credential = payload.credential;
-			auth = {
-				mallId: payload.credential.mallId,
-				shopNo: payload.credential.shopNo,
-				userId: payload.credential.userId,
-				accessTokenExpiresAt: payload.credential.accessTokenExpiresAt,
-				refreshTokenExpiresAt: payload.credential.refreshTokenExpiresAt,
-				scopes: [...payload.credential.scopes]
-			};
-			await saveTokenCredential(payload.credential);
-			scheduleCredentialRefresh();
+			await applyCredential(payload.credential);
 		}
 		return payload.result;
 	}

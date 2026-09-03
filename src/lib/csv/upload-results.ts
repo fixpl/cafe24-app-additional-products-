@@ -35,7 +35,7 @@ export function createUploadResultsCsv(record: ResultRecord): string {
 }
 
 export function createUploadResultsFileName(fileName: string): string {
-	const baseName = fileName.trim().replace(/\.csv$/i, '') || 'cafe24-additional-products';
+	const baseName = fileName.trim().replace(/\.(?:csv|xlsx)$/i, '') || 'cafe24-additional-products';
 	return `${baseName}-results.csv`;
 }
 
